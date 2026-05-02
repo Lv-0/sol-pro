@@ -214,6 +214,9 @@ Useful options:
 | Option                   | Purpose                                                                 |
 | ------------------------ | ----------------------------------------------------------------------- |
 | `--files <pattern>`      | Add a file, directory, or glob to the context bundle. Repeat as needed. |
+| `--prompt-file <path>`   | Read the question from a UTF-8 file; use `-` for stdin.                 |
+| `--artifacts`            | Ask for `ask-pro-response.zip` plus markdown fallback.                  |
+| `--response-zip`         | Alias for `--artifacts`.                                                |
 | `--dry-run`              | Create the session and `CONTEXT.zip` without opening ChatGPT.           |
 | `--resume [session-id]`  | Resume the latest or selected prepared/waiting session.                 |
 | `--status [session-id]`  | Show the latest or selected session status.                             |
@@ -229,9 +232,16 @@ Examples:
 ```bash
 ask-pro --dry-run --files "src/**/*.ts" "Audit this slice for hidden coupling."
 ask-pro --files src/ask-pro/session.ts --files tests/ask-pro "Find missing tests."
+ask-pro --prompt-file question.md --files .\src
+ask-pro --artifacts --prompt-file implementation-plan.md --files src
 ask-pro --status
 ask-pro --harvest 2026-05-01T165438-return-exactly-ask-pro-browser-login-ready
 ```
+
+Use `--prompt-file` for multiline prompts. This avoids shell quoting issues and
+keeps the exact question in `PROMPT.md`. `--files` accepts files, directories,
+and globs; Windows backslash paths and absolute paths inside the project cwd are
+normalized into stable relative manifest paths.
 
 ## Agent Output
 
@@ -260,14 +270,23 @@ ask_pro
   session: 2026-05-02T192156-review-this
   state: needs_auth
   reason: login_page_detected
-  profile: ~/.agents/skills/ask-pro/browser-profile
+  profile: shared
+  profile_path: ~/.agents/skills/ask-pro/browser-profile
+  chrome: launched
+  language: "en-US,en"
   action: human_login_then_resume
   resume: "ask-pro --resume 2026-05-02T192156-review-this"
 ```
 
-Generated response zips are still harvested into session files when ChatGPT
-provides them. If no zip is available, use `ask-pro --harvest <session-id>` to
-print the markdown fallback answer.
+When known, normal status records may also include `profile`, `profile_path`,
+`chrome`, and `language`. These are diagnostic hints for agents deciding whether
+a run is using the shared profile, an isolated agent profile, a saved DevTools
+session, or the expected English browser steering.
+
+Generated response zips are harvested when ChatGPT provides them. The wrapper no
+longer asks for a zip by default; pass `--artifacts` / `--response-zip` only
+when a structured implementation bundle is useful. If no zip is available, use
+`ask-pro --harvest <session-id>` to print the markdown answer.
 
 ## Sessions
 

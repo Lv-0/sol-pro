@@ -54,6 +54,170 @@ describe("ask-pro sessions", () => {
     expect(zip.toString("utf8")).toContain("[REDACTED_OPENAI_KEY]");
   });
 
+  test("preserves prompt text without injecting a response zip request", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+    const question = "\nLine one\n\nLine two with the real advisory question.\n";
+
+    const session = await createAskProSession({
+      cwd,
+      question,
+      filePatterns: [],
+      dryRun: true,
+    });
+
+    const prompt = await fs.readFile(path.join(session.dir, "PROMPT.md"), "utf8");
+    expect(prompt.startsWith(question)).toBe(true);
+    expect(prompt).not.toContain("ask-pro-response.zip");
+    expect(prompt).not.toContain("IMPLEMENTATION_PLAN.md");
+  });
+
+  test("adds response zip instructions only when artifacts are requested", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+
+    const session = await createAskProSession({
+      cwd,
+      question: "Return an implementation package.",
+      filePatterns: [],
+      dryRun: true,
+      artifacts: true,
+    });
+
+    const prompt = await fs.readFile(path.join(session.dir, "PROMPT.md"), "utf8");
+    expect(prompt).toContain("ask-pro-response.zip");
+    expect(prompt).toContain("IMPLEMENTATION_PLAN.md");
+    expect(session.status.artifacts).toBe(true);
+  });
+
+  test("normalizes Windows-style file and directory patterns", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+    await fs.mkdir(path.join(cwd, "src", "nested"), { recursive: true });
+    await fs.writeFile(path.join(cwd, "src", "nested", "a.ts"), "export const a = 1;\n");
+    await fs.writeFile(path.join(cwd, "src", "b.ts"), "export const b = 2;\n");
+
+    const session = await createAskProSession({
+      cwd,
+      question: "Review these files.",
+      filePatterns: [
+        path.join(cwd, "src", "nested", "a.ts"),
+        ".\\src\\b.ts",
+        path.join(cwd, "src", "nested"),
+      ],
+      dryRun: true,
+    });
+
+    expect(session.manifest.includedFiles.map((file) => file.path)).toEqual([
+      "src/b.ts",
+      "src/nested/a.ts",
+    ]);
+  });
+
+  test("keeps absolute project-root directory patterns scoped to the project", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+    await fs.mkdir(path.join(cwd, "src"), { recursive: true });
+    await fs.writeFile(path.join(cwd, "src", "rooted.ts"), "export const rooted = true;\n");
+
+    const session = await createAskProSession({
+      cwd,
+      question: "Review the project.",
+      filePatterns: [cwd],
+      dryRun: true,
+    });
+
+    expect(session.manifest.includedFiles.map((file) => file.path)).toEqual(["src/rooted.ts"]);
+    expect(session.manifest.includedFiles.some((file) => path.isAbsolute(file.path))).toBe(false);
+  });
+
+  test("rejects absolute file paths outside the project cwd", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-outside-"));
+    tempDirs.push(cwd, other);
+    await fs.writeFile(path.join(other, "outside.ts"), "export const outside = true;\n");
+
+    await expect(
+      createAskProSession({
+        cwd,
+        question: "Review this.",
+        filePatterns: [path.join(other, "outside.ts")],
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/inside the project cwd/);
+  });
+
+  test("rejects parent-relative file paths outside the project cwd", async () => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-parent-"));
+    const cwd = path.join(parent, "repo");
+    const sibling = path.join(parent, "sibling");
+    await fs.mkdir(cwd);
+    await fs.mkdir(sibling);
+    tempDirs.push(parent);
+    await fs.writeFile(path.join(sibling, "outside.ts"), "export const outside = true;\n");
+
+    await expect(
+      createAskProSession({
+        cwd,
+        question: "Review this.",
+        filePatterns: ["../sibling/outside.ts"],
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/inside the project cwd/);
+  });
+
+  test("allows parent segments that resolve inside the project cwd", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+    await fs.mkdir(path.join(cwd, "src"), { recursive: true });
+    await fs.writeFile(path.join(cwd, "README.md"), "# Inside\n");
+
+    const session = await createAskProSession({
+      cwd,
+      question: "Review this.",
+      filePatterns: ["src/../README.md"],
+      dryRun: true,
+    });
+
+    expect(session.manifest.includedFiles.map((file) => file.path)).toEqual(["README.md"]);
+  });
+
+  test("rejects absolute symlinked file paths that resolve outside the project cwd", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-outside-"));
+    tempDirs.push(cwd, other);
+    await fs.writeFile(path.join(other, "outside.ts"), "export const outside = true;\n");
+    const link = path.join(cwd, "outside-link");
+    await fs.symlink(other, link, process.platform === "win32" ? "junction" : "dir");
+
+    await expect(
+      createAskProSession({
+        cwd,
+        question: "Review this.",
+        filePatterns: [link],
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/inside the project cwd/);
+  });
+
+  test("rejects glob matches that traverse symlinked directories outside the project cwd", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-outside-"));
+    tempDirs.push(cwd, other);
+    await fs.writeFile(path.join(other, "outside.ts"), "export const outside = true;\n");
+    const link = path.join(cwd, "outside-link");
+    await fs.symlink(other, link, process.platform === "win32" ? "junction" : "dir");
+
+    await expect(
+      createAskProSession({
+        cwd,
+        question: "Review this.",
+        filePatterns: ["outside-link/**/*.ts"],
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/inside the project cwd/);
+  });
+
   test("reads latest status and answer", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
     tempDirs.push(cwd);

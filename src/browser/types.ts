@@ -105,7 +105,7 @@ export interface BrowserRunOptions {
       html?: string;
       meta?: { turnId?: string | null; messageId?: string | null };
     };
-  }) => void | Promise<void>;
+  }) => void | { keepBrowserOpen?: boolean } | Promise<void | { keepBrowserOpen?: boolean }>;
 }
 
 export interface BrowserRunResult {

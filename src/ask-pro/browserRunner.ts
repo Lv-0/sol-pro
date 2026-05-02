@@ -27,6 +27,7 @@ const DEFAULT_TIMEOUT_MS = 180 * 60 * 1000;
 const MANUAL_LOGIN_WAIT_MS = 10 * 60 * 1000;
 const ASK_PRO_CHATGPT_URL = "https://chatgpt.com/";
 const ASK_PRO_TEMPORARY_CHATGPT_URL = "https://chatgpt.com/?temporary-chat=true";
+const ASK_PRO_ACCEPT_LANGUAGE = "en-US,en";
 
 export interface RunAskProBrowserSessionOptions {
   cwd: string;
@@ -74,6 +75,8 @@ export async function runAskProBrowserSession({
       thinkingTime: requestedThinkingTime,
       temporary,
       url: chatgptUrl,
+      acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+      chromeMode: "launching",
     },
   });
   await updateAskProStatus({ cwd, sessionId, status: "BROWSER_STARTING" });
@@ -102,7 +105,7 @@ export async function runAskProBrowserSession({
         desiredModel: "GPT-5.5 Pro",
         modelStrategy: "select",
         thinkingTime: requestedThinkingTime,
-        acceptLanguage: "en-US,en",
+        acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
         keepBrowser: true,
         allowCookieErrors: true,
       },
@@ -121,11 +124,13 @@ export async function runAskProBrowserSession({
             thinkingTime: requestedThinkingTime,
             temporary,
             url: chatgptUrl,
+            acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+            chromeMode: "launched",
             runtime,
           },
         });
       },
-      afterAnswerCb: async ({ Runtime, Page, Input }) => {
+      afterAnswerCb: async ({ Runtime, Page, Input, answer }) => {
         const manifest = await harvestLatestAssistantZip({
           runtime: Runtime,
           page: Page,
@@ -133,26 +138,41 @@ export async function runAskProBrowserSession({
           sessionDir: paths.dir,
         });
         await writeResponseZipManifest(paths.dir, manifest);
+        const finalStatus = await classifyFinalAnswer(paths.dir, answer.markdown || answer.text);
+        if (finalStatus.status === "INCOMPLETE_ANSWER") {
+          logger("Keeping browser open for incomplete-answer debugging.");
+          return { keepBrowserOpen: true };
+        }
+        return undefined;
       },
     });
 
-    await writeAskProAnswer({ cwd, sessionId, answer: result.answerMarkdown || result.answerText });
+    const answer = result.answerMarkdown || result.answerText;
+    await writeAskProAnswer({ cwd, sessionId, answer });
+    await ensureResponseZipManifest(paths.dir);
+    const finalStatus = await classifyFinalAnswer(paths.dir, answer);
     await writeAskProBrowserMetadata({
       cwd,
       sessionId,
       metadata: {
         schemaVersion: 1,
-        status: "completed",
+        status: finalStatus.browserStatus,
         agentId,
         profileDir: browserProfile,
         thinkingTime: requestedThinkingTime,
         temporary,
         url: chatgptUrl,
+        acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+        chromeMode: "launched",
         runtime: browserResultToRuntime(result),
       },
     });
-    await ensureResponseZipManifest(paths.dir);
-    await updateAskProStatus({ cwd, sessionId, status: "COMPLETED" });
+    await updateAskProStatus({
+      cwd,
+      sessionId,
+      status: finalStatus.status,
+      reason: finalStatus.reason,
+    });
     return result;
   } catch (error) {
     if (
@@ -181,10 +201,12 @@ export async function runAskProBrowserSession({
     }
 
     if (isAuthGateError(error)) {
+      const currentMetadata = await readBrowserMetadata(paths.browser).catch(() => ({}));
       await writeAskProBrowserMetadata({
         cwd,
         sessionId,
         metadata: {
+          ...currentMetadata,
           schemaVersion: 1,
           status: "needs_user_auth",
           agentId,
@@ -192,6 +214,8 @@ export async function runAskProBrowserSession({
           thinkingTime: requestedThinkingTime,
           temporary,
           url: chatgptUrl,
+          acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+          chromeMode: "launched",
           reason: classifyBrowserError(error),
         },
       });
@@ -205,6 +229,7 @@ export async function runAskProBrowserSession({
     }
 
     if (isAssistantTimeoutError(error)) {
+      await writeTerminalBrowserMetadata(cwd, sessionId, "wait_timed_out", "assistant_timeout");
       await updateAskProStatus({
         cwd,
         sessionId,
@@ -212,11 +237,13 @@ export async function runAskProBrowserSession({
         reason: "assistant_timeout",
       });
     } else {
+      const reason = error instanceof Error ? error.message : String(error);
+      await writeTerminalBrowserMetadata(cwd, sessionId, "failed", reason);
       await updateAskProStatus({
         cwd,
         sessionId,
         status: "FAILED",
-        reason: error instanceof Error ? error.message : String(error),
+        reason,
       });
     }
     throw error;
@@ -288,6 +315,22 @@ export async function resumeAskProBrowserSession({
   }
 
   await updateAskProStatus({ cwd, sessionId, status: "WAITING" });
+  await writeAskProBrowserMetadata({
+    cwd,
+    sessionId,
+    metadata: {
+      ...metadata,
+      schemaVersion: 1,
+      status: "running",
+      profileDir: fallbackProfile,
+      thinkingTime: thinkingTime ?? metadata.thinkingTime,
+      temporary: effectiveTemporary,
+      url: chatgptUrl,
+      acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+      chromeMode: "reattaching",
+      reason: undefined,
+    },
+  });
   try {
     const result = await resumeBrowserSession(
       metadata.runtime,
@@ -297,35 +340,79 @@ export async function resumeAskProBrowserSession({
         manualLoginProfileDir: fallbackProfile,
         timeoutMs: DEFAULT_TIMEOUT_MS,
         inputTimeoutMs: 90_000,
-        acceptLanguage: "en-US,en",
+        acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
         url: chatgptUrl,
         thinkingTime: thinkingTime ?? metadata.thinkingTime,
       },
       logger,
-      { promptPreview: prompt },
+      {
+        promptPreview: prompt,
+        chromeModeCb: async (chromeMode) => {
+          const current = await readBrowserMetadata(paths.browser).catch(() => metadata);
+          await writeAskProBrowserMetadata({
+            cwd,
+            sessionId,
+            metadata: {
+              ...current,
+              schemaVersion: 1,
+              status: "running",
+              profileDir: fallbackProfile,
+              thinkingTime: thinkingTime ?? metadata.thinkingTime,
+              temporary: effectiveTemporary,
+              url: chatgptUrl,
+              acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+              chromeMode,
+              reason: undefined,
+            },
+          });
+        },
+      },
     );
-    await writeAskProAnswer({
-      cwd,
-      sessionId,
-      answer: result.answerMarkdown || result.answerText,
-    });
+    const answer = result.answerMarkdown || result.answerText;
+    await writeAskProAnswer({ cwd, sessionId, answer });
+    await ensureResponseZipManifest(paths.dir);
+    const finalStatus = await classifyFinalAnswer(paths.dir, answer);
     await writeAskProBrowserMetadata({
       cwd,
       sessionId,
       metadata: {
         ...metadata,
         schemaVersion: 1,
-        status: "completed",
+        status: finalStatus.browserStatus,
         profileDir: fallbackProfile,
         thinkingTime: thinkingTime ?? metadata.thinkingTime,
         temporary: effectiveTemporary,
         url: chatgptUrl,
+        acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+        chromeMode: result.chromeMode ?? "reused_devtools",
+        reason: undefined,
       },
     });
-    await ensureResponseZipManifest(paths.dir);
-    await updateAskProStatus({ cwd, sessionId, status: "COMPLETED" });
+    await updateAskProStatus({
+      cwd,
+      sessionId,
+      status: finalStatus.status,
+      reason: finalStatus.reason,
+    });
   } catch (error) {
     if (isAuthGateError(error)) {
+      const currentMetadata = await readBrowserMetadata(paths.browser).catch(() => metadata);
+      await writeAskProBrowserMetadata({
+        cwd,
+        sessionId,
+        metadata: {
+          ...currentMetadata,
+          schemaVersion: 1,
+          status: "needs_user_auth",
+          profileDir: fallbackProfile,
+          thinkingTime: thinkingTime ?? metadata.thinkingTime,
+          temporary: effectiveTemporary,
+          url: chatgptUrl,
+          acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+          chromeMode: authFailureChromeMode(currentMetadata.chromeMode),
+          reason: classifyBrowserError(error),
+        },
+      });
       await updateAskProStatus({
         cwd,
         sessionId,
@@ -334,11 +421,23 @@ export async function resumeAskProBrowserSession({
       });
       throw new AskProNeedsAuthError(sessionId, fallbackProfile, classifyBrowserError(error));
     }
+    if (isAssistantTimeoutError(error)) {
+      await writeTerminalBrowserMetadata(cwd, sessionId, "wait_timed_out", "assistant_timeout");
+      await updateAskProStatus({
+        cwd,
+        sessionId,
+        status: "WAIT_TIMED_OUT",
+        reason: "assistant_timeout",
+      });
+      throw error;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    await writeTerminalBrowserMetadata(cwd, sessionId, "failed", reason);
     await updateAskProStatus({
       cwd,
       sessionId,
       status: "FAILED",
-      reason: error instanceof Error ? error.message : String(error),
+      reason,
     });
     throw error;
   }
@@ -416,6 +515,87 @@ async function ensureResponseZipManifest(sessionDir: string): Promise<void> {
       },
     });
   }
+}
+
+async function classifyFinalAnswer(
+  sessionDir: string,
+  answer: string,
+): Promise<{ status: "COMPLETED" | "INCOMPLETE_ANSWER"; browserStatus: string; reason?: string }> {
+  if (!isSuspiciousPreambleAnswer(answer) || (await hasCompleteResponseZip(sessionDir))) {
+    return { status: "COMPLETED", browserStatus: "completed" };
+  }
+  return {
+    status: "INCOMPLETE_ANSWER",
+    browserStatus: "incomplete_answer",
+    reason: "preamble_without_artifacts",
+  };
+}
+
+async function hasCompleteResponseZip(sessionDir: string): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(path.join(sessionDir, "PRO_OUTPUT_MANIFEST.json"), "utf8");
+    const manifest = JSON.parse(raw) as {
+      responseZip?: { status?: string; requiredFilesPresent?: boolean };
+    };
+    return (
+      manifest.responseZip?.status === "downloaded" &&
+      manifest.responseZip.requiredFilesPresent === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isSuspiciousPreambleAnswer(answer: string): boolean {
+  const normalized = answer.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized || normalized.length > 1000) return false;
+  if (hasSubstantiveAnswerMarker(normalized)) return false;
+  const futureIntent =
+    /\b(sure,?\s+)?(i['’]?ll|i will|let me|i['’]?m going to|i am going to)\b/.test(normalized);
+  const deferredWork =
+    /\b(inspect|review|analy[sz]e|read|look at|take a look|create|prepare|generate|build|get back to you)\b/.test(
+      normalized,
+    );
+  return futureIntent && deferredWork;
+}
+
+function hasSubstantiveAnswerMarker(answer: string): boolean {
+  return /\b(recommendation|recommend|answer|verdict|use|fix|root cause|because|risk|should|shouldn['’]?t|must|do not|don['’]?t)\b/.test(
+    answer,
+  );
+}
+
+function authFailureChromeMode(chromeMode: AskProBrowserMetadata["chromeMode"]) {
+  return chromeMode === "reattaching" ? "reused_devtools" : chromeMode;
+}
+
+async function writeTerminalBrowserMetadata(
+  cwd: string,
+  sessionId: string,
+  status: "failed" | "wait_timed_out",
+  reason: string,
+): Promise<void> {
+  const paths = getAskProSessionPaths(cwd, sessionId);
+  const current = await readBrowserMetadata(paths.browser).catch(() => null);
+  if (!current) return;
+  const { chromeMode, ...rest } = current;
+  const terminalChromeMode =
+    status === "wait_timed_out" && chromeMode === "reattaching"
+      ? "reused_devtools"
+      : chromeMode === "launched" || chromeMode === "reused_devtools" || chromeMode === "relaunched"
+        ? chromeMode
+        : undefined;
+  await writeAskProBrowserMetadata({
+    cwd,
+    sessionId,
+    metadata: {
+      ...rest,
+      schemaVersion: 1,
+      status,
+      reason,
+      ...(terminalChromeMode ? { chromeMode: terminalChromeMode } : {}),
+    },
+  });
 }
 
 function resolveResumeBrowserProfile(metadata: AskProBrowserMetadata): string {
@@ -546,6 +726,8 @@ interface AskProBrowserMetadata {
   thinkingTime?: ThinkingTimeLevel;
   temporary?: boolean;
   url?: string;
+  acceptLanguage?: string;
+  chromeMode?: "launching" | "launched" | "reattaching" | "reused_devtools" | "relaunched";
   runtime?: {
     chromePid?: number;
     chromePort?: number;

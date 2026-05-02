@@ -31,8 +31,11 @@ When invoked:
 3. Choose a small, high-signal file bundle with `--files`.
 4. Write the prompt yourself; include constraints, what you inspected, the files attached, options considered, and the output you need.
 5. Run the smallest useful command, usually `ask-pro --files "<glob>" "<prompt>"`.
+   For multiline prompts, write a temporary prompt file and use
+   `ask-pro --prompt-file <path> --files "<glob>"`; do not rely on shell
+   multiline quoting.
    If `ask-pro` is not on `PATH`, run it from the source checkout instead:
-   `npm exec --yes pnpm@10.33.2 -- --dir C:/Code/ask-pro start -- --files "<glob>" "<prompt>"`.
+   `npm exec --yes pnpm@10.33.2 -- --dir C:/Code/ask-pro start -- --prompt-file <path> --files "<glob>"`.
 6. If auth is required, stop and ask the human to log in in the opened browser.
 7. Read the CLI's compact `ask_pro` record and run the emitted `resume` or
    `harvest` command when that is the next action.
@@ -57,7 +60,8 @@ require the human to log in again. Example:
 
 ## Prompt Shape
 
-Ask Pro to be direct, practical, and biased toward boring reliable choices. For implementation-heavy work, request:
+Ask Pro to be direct, practical, and biased toward boring reliable choices.
+Keep advisory design consults as plain answer requests. For implementation-heavy work, explicitly request:
 
 - `IMPLEMENTATION_PLAN.md`
 - `TASKS.json`
@@ -65,13 +69,18 @@ Ask Pro to be direct, practical, and biased toward boring reliable choices. For 
 - `RISK_REGISTER.md`
 - `FILES_TO_EDIT.md`
 
-If useful, ask Pro to create `ask-pro-response.zip` with those files. Always support markdown fallback.
+If useful, ask Pro to create `ask-pro-response.zip` with those files. Always support markdown fallback. The wrapper does not request a zip by default.
+Pass `--artifacts` only for implementation-package prompts. Keep advisory consults inline by default.
 
 ## Output
 
 Normal `ask-pro` stdout is compact TOON-style telemetry. Use `state`, `action`,
 `resume`, and `harvest` to decide the next command. Browser progress may appear
 on stderr and can be ignored unless diagnosing a stuck run.
+
+When present, use `profile`, `profile_path`, `chrome`, and `language` only as
+diagnostic hints. They tell you whether the run used the shared profile, an
+isolated agent profile, saved DevTools state, and English browser steering.
 
 `ask-pro --harvest <session-id>` prints the raw markdown answer. If ChatGPT also
 provided `ask-pro-response.zip`, files are extracted under the session's
@@ -84,6 +93,8 @@ ask-pro "Review the async billing webhook migration plan and return an implement
 ask-pro --extended "Produce a deep implementation plan for this risky migration."
 ask-pro --temporary "Review this sensitive migration plan, and fail if Temporary Chat cannot use Pro."
 ask-pro --no-temporary "Review this in normal ChatGPT instead of Temporary Chat."
+ask-pro --prompt-file question.md --files .\src
+ask-pro --artifacts --prompt-file implementation-plan.md --files src
 ask-pro --files "src/api/stripe/**" --files "prisma/**" --files "src/lib/billing/**" \
   "Review whether this Stripe webhook flow should use a queue or transactional outbox."
 ask-pro --dry-run "Prepare the Pro handoff but do not open the browser."

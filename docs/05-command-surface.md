@@ -50,6 +50,8 @@ V1 commands:
 ```bash
 ask-pro "<question>"
 ask-pro --dry-run "<question>"
+ask-pro --prompt-file <path>
+ask-pro --artifacts --prompt-file <path>
 ask-pro --resume [session-id]
 ask-pro --status [session-id]
 ask-pro --harvest [session-id]
@@ -64,6 +66,12 @@ Optional file flags:
 ```bash
 ask-pro --files "src/**" --files "prisma/**" "<question>"
 ```
+
+Use `--prompt-file <path>` for multiline prompts; `--prompt-file -` reads stdin.
+`--prompt-file -` reads stdin and fails fast if stdin is interactive. `--files`
+accepts files, directories, and globs. Windows absolute paths inside the project
+cwd and backslash paths are normalized to relative POSIX manifest paths. Prefer
+`--cwd <repo-root>` plus repo-relative `--files` for cross-repo work.
 
 Do not expose broad model/preset complexity in the normal path. `--extended` is
 the single explicit long-thinking opt-in for hard architecture, production-risk,
@@ -98,6 +106,10 @@ progress, waiting heartbeats, and verbose diagnostics go to stderr and the
 session log. `--harvest` prints raw `ANSWER.md` so the Pro answer can be piped
 or read without a wrapper.
 
+The wrapper prompt does not request generated response zips by default. Agents
+should pass `--artifacts` / `--response-zip` only when the task needs an
+implementation bundle.
+
 Status/create/auth/error records should stay tiny and action-oriented:
 
 ```toon
@@ -117,10 +129,17 @@ ask_pro
   session: 2026-05-01-billing-webhook
   state: needs_auth
   reason: login_page_detected
-  profile: ~/.agents/skills/ask-pro/browser-profile
+  profile: shared
+  profile_path: ~/.agents/skills/ask-pro/browser-profile
+  chrome: launched
+  language: "en-US,en"
   action: human_login_then_resume
   resume: "ask-pro --resume 2026-05-01-billing-webhook"
 ```
+
+When known, status records include compact browser preflight fields:
+`profile` (`shared`, `agent`, or `legacy`), `profile_path`, `chrome`, and
+`language`. Keep deeper browser diagnostics in stderr/session logs, not stdout.
 
 Errors are structured on stdout with a non-zero exit:
 

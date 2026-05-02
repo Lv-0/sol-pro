@@ -50,6 +50,7 @@ type BrowserSessionConfig = BrowserAutomationConfig;
 export interface ReattachDeps {
   listTargets?: () => Promise<TargetInfoLite[]>;
   connect?: (options?: unknown) => Promise<ChromeClient>;
+  chromeModeCb?: (mode: ReattachResult["chromeMode"]) => Promise<void> | void;
   waitForAssistantResponse?: typeof waitForAssistantResponse;
   captureAssistantMarkdown?: typeof captureAssistantMarkdown;
   recoverSession?: (
@@ -62,6 +63,7 @@ export interface ReattachDeps {
 export interface ReattachResult {
   answerText: string;
   answerMarkdown: string;
+  chromeMode: "reused_devtools" | "relaunched";
 }
 
 export async function resumeBrowserSession(
@@ -74,10 +76,17 @@ export async function resumeBrowserSession(
     deps.recoverSession ??
     (async (runtimeMeta, configMeta) =>
       resumeBrowserSessionViaNewChrome(runtimeMeta, configMeta, logger, deps));
+  const recoverWithRelaunchMode = async (
+    runtimeMeta: BrowserRuntimeMetadata,
+    configMeta: BrowserSessionConfig | undefined,
+  ) => {
+    await deps.chromeModeCb?.("relaunched");
+    return recoverSession(runtimeMeta, configMeta);
+  };
 
   if (!runtime.chromePort && !runtime.chromeBrowserWSEndpoint) {
     logger("No running Chrome detected; reopening browser to locate the session.");
-    return recoverSession(runtime, config);
+    return recoverWithRelaunchMode(runtime, config);
   }
 
   try {
@@ -191,13 +200,17 @@ export async function resumeBrowserSession(
 
     await connection.close().catch(() => undefined);
 
-    return { answerText: aligned.answerText, answerMarkdown: aligned.answerMarkdown };
+    return {
+      answerText: aligned.answerText,
+      answerMarkdown: aligned.answerMarkdown,
+      chromeMode: "reused_devtools",
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger(
       `Existing Chrome reattach failed (${message}); reopening browser to locate the session.`,
     );
-    return recoverSession(runtime, config);
+    return recoverWithRelaunchMode(runtime, config);
   }
 }
 
@@ -357,7 +370,11 @@ async function resumeBrowserSessionViaNewChrome(
     }
   }
 
-  return { answerText: aligned.answerText, answerMarkdown: aligned.answerMarkdown };
+  return {
+    answerText: aligned.answerText,
+    answerMarkdown: aligned.answerMarkdown,
+    chromeMode: "relaunched",
+  };
 }
 
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite

@@ -29,6 +29,8 @@ describe("ask-pro cli", () => {
     expect(stdout).toContain("--extended");
     expect(stdout).toContain("--temporary");
     expect(stdout).toContain("--no-temporary");
+    expect(stdout).toContain("--prompt-file");
+    expect(stdout).toContain("--artifacts");
     expect(stdout).toContain("multi-hour wait");
   }, 30000);
 
@@ -63,6 +65,73 @@ describe("ask-pro cli", () => {
     );
     expect(JSON.parse(statusRaw)).toMatchObject({ status: "DRY_RUN_COMPLETE", dryRun: true });
     expect(JSON.parse(statusRaw).resumeCommand).not.toContain("--no-temporary");
+  }, 30000);
+
+  test("creates a dry-run session from a prompt file", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-cli-prompt-file-"));
+    tempDirs.push(cwd);
+    await fs.writeFile(path.join(cwd, "question.md"), "Line one\n\nLine two\n", "utf8");
+
+    const cli = path.join(process.cwd(), "bin", "ask-pro-cli.ts");
+    const tsxLoader = pathToFileURL(
+      path.join(process.cwd(), "node_modules", "tsx", "dist", "esm", "index.mjs"),
+    ).href;
+    await execFileAsync(
+      process.execPath,
+      ["--import", tsxLoader, cli, "--dry-run", "--prompt-file", "question.md"],
+      { cwd },
+    );
+
+    const sessions = await fs.readdir(path.join(cwd, ".ask-pro", "sessions"));
+    const prompt = await fs.readFile(
+      path.join(cwd, ".ask-pro", "sessions", sessions[0]!, "PROMPT.md"),
+      "utf8",
+    );
+    expect(prompt).toContain("Line one\n\nLine two");
+  }, 30000);
+
+  test("creates an artifacts dry-run session only when requested", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-cli-artifacts-"));
+    tempDirs.push(cwd);
+
+    const cli = path.join(process.cwd(), "bin", "ask-pro-cli.ts");
+    const tsxLoader = pathToFileURL(
+      path.join(process.cwd(), "node_modules", "tsx", "dist", "esm", "index.mjs"),
+    ).href;
+    await execFileAsync(
+      process.execPath,
+      ["--import", tsxLoader, cli, "--dry-run", "--artifacts", "Return a package."],
+      { cwd },
+    );
+
+    const sessions = await fs.readdir(path.join(cwd, ".ask-pro", "sessions"));
+    const sessionDir = path.join(cwd, ".ask-pro", "sessions", sessions[0]!);
+    const prompt = await fs.readFile(path.join(sessionDir, "PROMPT.md"), "utf8");
+    const status = JSON.parse(await fs.readFile(path.join(sessionDir, "status.json"), "utf8"));
+    expect(prompt).toContain("ask-pro-response.zip");
+    expect(status.artifacts).toBe(true);
+  }, 30000);
+
+  test("rejects mixed question argument and prompt file", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-cli-prompt-file-mixed-"));
+    tempDirs.push(cwd);
+    await fs.writeFile(path.join(cwd, "question.md"), "Prompt\n", "utf8");
+
+    const cli = path.join(process.cwd(), "bin", "ask-pro-cli.ts");
+    const tsxLoader = pathToFileURL(
+      path.join(process.cwd(), "node_modules", "tsx", "dist", "esm", "index.mjs"),
+    ).href;
+
+    await expect(
+      execFileAsync(
+        process.execPath,
+        ["--import", tsxLoader, cli, "--dry-run", "--prompt-file", "question.md", "Inline"],
+        { cwd },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("Use either a question argument or --prompt-file"),
+    });
   }, 30000);
 
   test("prints session status as compact TOON", async () => {
@@ -168,8 +237,171 @@ describe("ask-pro cli", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("  state: needs_auth\n");
     expect(stdout).toContain("  action: human_login_then_resume\n");
-    expect(stdout).toContain('  profile: "C:/AskPro/Profile"\n');
+    expect(stdout).toContain("  profile: legacy\n");
+    expect(stdout).toContain('  profile_path: "C:/AskPro/Profile"\n');
     expect(stdout).toContain('  resume: "ask-pro --resume ');
+  }, 30000);
+
+  test("prints compact browser preflight fields when known", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-cli-browser-status-"));
+    tempDirs.push(cwd);
+
+    const cli = path.join(process.cwd(), "bin", "ask-pro-cli.ts");
+    const tsxLoader = pathToFileURL(
+      path.join(process.cwd(), "node_modules", "tsx", "dist", "esm", "index.mjs"),
+    ).href;
+    await execFileAsync(
+      process.execPath,
+      ["--import", tsxLoader, cli, "--dry-run", "Review this."],
+      {
+        cwd,
+      },
+    );
+    const sessions = await fs.readdir(path.join(cwd, ".ask-pro", "sessions"));
+    const statusPath = path.join(cwd, ".ask-pro", "sessions", sessions[0]!, "status.json");
+    const status = JSON.parse(await fs.readFile(statusPath, "utf8"));
+    await fs.writeFile(
+      path.join(cwd, ".ask-pro", "sessions", sessions[0]!, "browser.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: "running",
+          agentId: "agent-1234567890",
+          profileDir: path.join(
+            os.homedir(),
+            ".agents",
+            "skills",
+            "ask-pro",
+            "agents",
+            "agent-1234567890",
+            "browser-profile",
+          ),
+          chromeMode: "launched",
+          acceptLanguage: "en-US,en",
+          runtime: { chromePort: 9222 },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await fs.writeFile(
+      statusPath,
+      `${JSON.stringify({ ...status, status: "WAITING" }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      ["--import", tsxLoader, cli, "--status"],
+      { cwd },
+    );
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain("  state: waiting\n");
+    expect(stdout).toContain("  profile: agent\n");
+    expect(stdout).toContain('  profile_path: "');
+    expect(stdout).toContain("agent-1234567890");
+    expect(stdout).toContain("  chrome: launched\n");
+    expect(stdout).toContain('  language: "en-US,en"\n');
+  }, 30000);
+
+  test("does not infer Chrome mode from runtime metadata alone", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-cli-browser-runtime-"));
+    tempDirs.push(cwd);
+
+    const cli = path.join(process.cwd(), "bin", "ask-pro-cli.ts");
+    const tsxLoader = pathToFileURL(
+      path.join(process.cwd(), "node_modules", "tsx", "dist", "esm", "index.mjs"),
+    ).href;
+    await execFileAsync(
+      process.execPath,
+      ["--import", tsxLoader, cli, "--dry-run", "Review this."],
+      {
+        cwd,
+      },
+    );
+    const sessions = await fs.readdir(path.join(cwd, ".ask-pro", "sessions"));
+    const statusPath = path.join(cwd, ".ask-pro", "sessions", sessions[0]!, "status.json");
+    const status = JSON.parse(await fs.readFile(statusPath, "utf8"));
+    await fs.writeFile(
+      path.join(cwd, ".ask-pro", "sessions", sessions[0]!, "browser.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: "running",
+          profileDir: path.join(os.homedir(), ".agents", "skills", "ask-pro", "browser-profile"),
+          runtime: { chromePort: 9222 },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await fs.writeFile(
+      statusPath,
+      `${JSON.stringify({ ...status, status: "WAITING" }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      ["--import", tsxLoader, cli, "--status"],
+      { cwd },
+    );
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain("  profile: shared\n");
+    expect(stdout).not.toContain("  chrome: reused_devtools\n");
+  }, 30000);
+
+  test("does not classify legacy profile paths as agent profiles from agentId alone", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-cli-browser-legacy-agent-"));
+    tempDirs.push(cwd);
+
+    const cli = path.join(process.cwd(), "bin", "ask-pro-cli.ts");
+    const tsxLoader = pathToFileURL(
+      path.join(process.cwd(), "node_modules", "tsx", "dist", "esm", "index.mjs"),
+    ).href;
+    await execFileAsync(
+      process.execPath,
+      ["--import", tsxLoader, cli, "--dry-run", "Review this."],
+      {
+        cwd,
+      },
+    );
+    const sessions = await fs.readdir(path.join(cwd, ".ask-pro", "sessions"));
+    const statusPath = path.join(cwd, ".ask-pro", "sessions", sessions[0]!, "status.json");
+    const status = JSON.parse(await fs.readFile(statusPath, "utf8"));
+    await fs.writeFile(
+      path.join(cwd, ".ask-pro", "sessions", sessions[0]!, "browser.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          status: "running",
+          agentId: "review-t1-59cd6bada6",
+          profileDir: "C:/Legacy/Profile",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await fs.writeFile(
+      statusPath,
+      `${JSON.stringify({ ...status, status: "WAITING" }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      ["--import", tsxLoader, cli, "--status"],
+      { cwd },
+    );
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain("  profile: legacy\n");
+    expect(stdout).toContain('  profile_path: "C:/Legacy/Profile"\n');
   }, 30000);
 
   test("prints resume command for waiting status", async () => {

@@ -7,6 +7,18 @@
 - Rename the package and binary surface to `ask_pro` / `ask-pro`.
 - Change normal CLI stdout to compact TOON-style agent telemetry and keep
   browser progress on stderr/session logs.
+- Add compact browser preflight fields to agent telemetry when known, including
+  profile mode/path, Chrome mode, and language steering.
+- Add `--prompt-file` for multiline prompts and stdin handoffs without fragile
+  shell quoting.
+- Add `--artifacts` / `--response-zip` as the explicit response bundle opt-in.
+- Normalize `--files` inputs from Windows backslash paths, absolute paths inside
+  the project cwd, and directory paths into stable relative manifest paths, with
+  realpath containment checks.
+- Stop adding the generated response zip request to every wrapper prompt; agents
+  should ask for `ask-pro-response.zip` only when the task needs that bundle.
+- Mark suspicious preamble-only answers without valid artifacts as
+  `INCOMPLETE_ANSWER` instead of `COMPLETED`.
 - Keep `ask-pro --harvest` as raw `ANSWER.md` output so agents can pipe or read
   the Pro answer without a metadata wrapper.
 - Keep npm publishing out of scope until a human explicitly approves release.
@@ -22,8 +34,8 @@
 ### Added
 
 - Add the minimal V1 CLI: `ask-pro "<question>"`, `--files`, `--dry-run`,
-  `--resume`, `--status`, `--harvest`, `--copy`, `--extended`, `--temporary`,
-  `--no-temporary`, and `--verbose`.
+  `--prompt-file`, `--artifacts`, `--response-zip`, `--resume`, `--status`, `--harvest`, `--copy`,
+  `--extended`, `--temporary`, `--no-temporary`, and `--verbose`.
 - Add the `$ask-pro` Codex skill and plugin skeleton.
 - Add `pnpm run plugin:refresh` to refresh the local Codex plugin cache from
   the repo source without hand-copying generated cache files.

@@ -346,6 +346,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let removeDialogHandler: (() => void) | null = null;
   let appliedCookies = 0;
   let preserveBrowserOnError = false;
+  let preserveBrowserAfterComplete = false;
 
   try {
     try {
@@ -1135,7 +1136,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       throw new Error("Chrome disconnected before completion");
     }
     if (options.afterAnswerCb) {
-      await options.afterAnswerCb({
+      const afterAnswerResult = await options.afterAnswerCb({
         Runtime,
         Page,
         Input,
@@ -1146,6 +1147,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           meta: answer.meta,
         },
       });
+      preserveBrowserAfterComplete = Boolean(afterAnswerResult?.keepBrowserOpen);
     }
     runStatus = "complete";
     const durationMs = Date.now() - startedAt;
@@ -1234,13 +1236,21 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     // Close the isolated tab once the response has been fully captured to prevent
     // tab accumulation across repeated runs. Keep the tab open on incomplete runs
     // so reattach can recover the response.
-    if (runStatus === "complete" && isolatedTargetId && chrome?.port && ownsTarget) {
+    if (
+      runStatus === "complete" &&
+      !preserveBrowserAfterComplete &&
+      isolatedTargetId &&
+      chrome?.port &&
+      ownsTarget
+    ) {
       await closeTab(chrome.port, isolatedTargetId, logger, chromeHost).catch(() => undefined);
     }
     removeDialogHandler?.();
     removeTerminationHooks?.();
     const keepBrowserOpen =
-      preserveBrowserOnError || (effectiveKeepBrowser && runStatus !== "complete");
+      preserveBrowserAfterComplete ||
+      preserveBrowserOnError ||
+      (effectiveKeepBrowser && runStatus !== "complete");
     if (!keepBrowserOpen) {
       if (!connectionClosedUnexpectedly) {
         try {
@@ -1272,10 +1282,28 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         logger(`Cleanup ${runStatus} • ${totalSeconds.toFixed(1)}s total`);
       }
     } else if (!connectionClosedUnexpectedly) {
-      chrome.process?.unref?.();
+      releaseChromeProcessHandle(chrome);
       logger(`Chrome left running on port ${chrome.port} with profile ${userDataDir}`);
     }
   }
+}
+
+function releaseChromeProcessHandle(chrome: LaunchedChrome | null | undefined): void {
+  const child = chrome?.process as
+    | (NonNullable<LaunchedChrome["process"]> & {
+        stdin?: { unref?: () => void };
+        stdout?: { unref?: () => void };
+        stderr?: { unref?: () => void };
+        stdio?: Array<{ unref?: () => void } | null | undefined>;
+      })
+    | undefined;
+  child?.stdin?.unref?.();
+  child?.stdout?.unref?.();
+  child?.stderr?.unref?.();
+  for (const stream of child?.stdio ?? []) {
+    stream?.unref?.();
+  }
+  child?.unref?.();
 }
 
 const DEFAULT_DEBUG_PORT = 9222;

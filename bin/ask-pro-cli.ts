@@ -18,11 +18,19 @@ import {
   runAskProBrowserSession,
 } from "../src/ask-pro/browserRunner.js";
 import { renderToonRecord, type AskProToonFields } from "../src/ask-pro/toon.js";
+import {
+  askProAgentIdForManagedBrowserProfileDir,
+  defaultAskProBrowserProfileDir,
+  isAskProManagedBrowserProfileDir,
+} from "../src/browser/profilePaths.js";
 import { getCliVersion } from "../src/version.js";
 
 interface AskProOptions {
   dryRun?: boolean;
   files?: string[];
+  promptFile?: string;
+  artifacts?: boolean;
+  responseZip?: boolean;
   resume?: string | boolean;
   status?: string | boolean;
   harvest?: string | boolean;
@@ -42,6 +50,9 @@ program
   .argument("[question...]", "question to send to ChatGPT Pro")
   .option("--dry-run", "prepare the session and context bundle without opening the browser")
   .option("--files <pattern>", "include files or globs in the context bundle", collectFiles, [])
+  .option("--prompt-file <path>", "read the question from a UTF-8 file; use - for stdin")
+  .option("--artifacts", "ask Pro for ask-pro-response.zip plus markdown fallback")
+  .option("--response-zip", "alias for --artifacts")
   .option("--resume [session-id]", "resume a prepared or waiting ask-pro session")
   .option("--status [session-id]", "show ask-pro session status")
   .option("--harvest [session-id]", "print harvested ANSWER.md for a session")
@@ -75,7 +86,7 @@ async function runAskPro(question: string, options: AskProOptions): Promise<void
   if (options.status !== undefined) {
     const { status } = await readAskProStatus({ cwd, sessionId: optionSessionId(options.status) });
     printStatusRecord(status, {
-      profile: await readStatusBrowserProfile(cwd, status),
+      ...(await readBrowserPreflight(cwd, status)),
       ...answerExtraForStatus(status, status.sessionId),
     });
     return;
@@ -104,7 +115,7 @@ async function runAskPro(question: string, options: AskProOptions): Promise<void
         action: "copy_target",
       });
     } else {
-      printStatusRecord(status, { profile: await readStatusBrowserProfile(cwd, status) });
+      printStatusRecord(status, await readBrowserPreflight(cwd, status));
     }
     return;
   }
@@ -128,11 +139,14 @@ async function runAskPro(question: string, options: AskProOptions): Promise<void
   }
 
   const dryRun = options.dryRun === true;
+  const resolvedQuestion = await resolveQuestion(question, options, cwd);
+  const artifacts = options.artifacts === true || options.responseZip === true;
   const session = await createAskProSession({
     cwd,
-    question,
+    question: resolvedQuestion,
     filePatterns: options.files ?? [],
     dryRun,
+    artifacts,
   });
   const resumeCommand = buildResumeCommand(session.id, options, cwd);
   const harvestCommand = buildHarvestCommand(session.id, cwd);
@@ -162,6 +176,34 @@ function collectFiles(value: string, previous: string[]): string[] {
   return previous.concat(value);
 }
 
+async function resolveQuestion(
+  question: string,
+  options: AskProOptions,
+  cwd: string,
+): Promise<string> {
+  if (!options.promptFile) {
+    return question;
+  }
+  if (question.trim()) {
+    throw new Error("Use either a question argument or --prompt-file, not both.");
+  }
+  if (options.promptFile === "-") {
+    if (process.stdin.isTTY) {
+      throw new Error("--prompt-file - requires piped stdin.");
+    }
+    return readStdin();
+  }
+  return fs.readFile(path.resolve(cwd, options.promptFile), "utf8");
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 function optionSessionId(value: string | boolean | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
@@ -173,13 +215,17 @@ async function submitOrResumeBrowserSession(
 ): Promise<void> {
   const { status } = await readAskProStatus({ cwd, sessionId });
   if (status.status === "COMPLETED" || status.status === "HARVESTED") {
-    printStatusRecord(status, answerExtraForStatus(status, sessionId));
+    printStatusRecord(status, {
+      ...(await readBrowserPreflight(cwd, status)),
+      ...answerExtraForStatus(status, sessionId),
+    });
     return;
   }
   if (
     status.status === "SUBMITTED" ||
     status.status === "WAITING" ||
     status.status === "WAIT_TIMED_OUT" ||
+    status.status === "INCOMPLETE_ANSWER" ||
     status.status === "NEEDS_USER_AUTH"
   ) {
     try {
@@ -192,13 +238,16 @@ async function submitOrResumeBrowserSession(
       });
     } catch (error) {
       if (error instanceof AskProNeedsAuthError) {
-        printAuthInstructions(sessionId, options, cwd, error);
+        await printAuthInstructions(sessionId, options, cwd, error);
         return;
       }
       throw error;
     }
     const { status: completed } = await readAskProStatus({ cwd, sessionId });
-    printStatusRecord(completed, answerExtraForStatus(completed, sessionId));
+    printStatusRecord(completed, {
+      ...(await readBrowserPreflight(cwd, completed)),
+      ...answerExtraForStatus(completed, sessionId),
+    });
     return;
   }
   try {
@@ -210,10 +259,13 @@ async function submitOrResumeBrowserSession(
       verbose: options.verbose,
     });
     const { status: completed } = await readAskProStatus({ cwd, sessionId });
-    printStatusRecord(completed, answerExtraForStatus(completed, sessionId));
+    printStatusRecord(completed, {
+      ...(await readBrowserPreflight(cwd, completed)),
+      ...answerExtraForStatus(completed, sessionId),
+    });
   } catch (error) {
     if (error instanceof AskProNeedsAuthError) {
-      printAuthInstructions(sessionId, options, cwd, error);
+      await printAuthInstructions(sessionId, options, cwd, error);
       return;
     }
     throw error;
@@ -269,18 +321,24 @@ function resolveProjectCwd(options: AskProOptions): string {
   return process.cwd();
 }
 
-function printAuthInstructions(
+async function printAuthInstructions(
   sessionId: string,
   options: AskProOptions,
   cwd: string,
   error: AskProNeedsAuthError,
-): void {
+): Promise<void> {
   const resumeCommand = buildResumeCommand(sessionId, options, cwd);
+  const fallbackPreflight = {
+    profile: profileMode(error.browserProfile),
+    profile_path: collapseHome(error.browserProfile),
+  };
+  const browserPreflight = await readBrowserPreflightForSession(cwd, sessionId);
   writeToon("ask_pro", {
     session: sessionId,
     state: "needs_auth",
     reason: error.reason,
-    profile: collapseHome(error.browserProfile),
+    ...fallbackPreflight,
+    ...browserPreflight,
     action: "human_login_then_resume",
     resume: resumeCommand,
   });
@@ -349,6 +407,7 @@ function normalizeTemporary(temporary: boolean | undefined): string {
 function actionForStatus(status: AskProStatusFile): string {
   switch (status.status) {
     case "DRY_RUN_COMPLETE":
+    case "INCOMPLETE_ANSWER":
     case "READY_TO_SUBMIT":
     case "WAIT_TIMED_OUT":
     case "FAILED":
@@ -380,6 +439,7 @@ function shouldPrintResume(status: AskProStatusFile): boolean {
     "AUTH_OK",
     "SUBMITTING",
     "DRY_RUN_COMPLETE",
+    "INCOMPLETE_ANSWER",
     "SUBMITTED",
     "WAITING",
     "READY_TO_SUBMIT",
@@ -405,21 +465,65 @@ function isAnswerBearingStatus(status: AskProStatusFile): boolean {
   return ["COMPLETED", "READY_TO_HARVEST", "HARVESTED"].includes(status.status);
 }
 
-async function readStatusBrowserProfile(
+async function readBrowserPreflight(
   cwd: string,
   status: AskProStatusFile,
-): Promise<string | undefined> {
-  if (status.status !== "NEEDS_USER_AUTH") {
-    return undefined;
-  }
+): Promise<AskProToonFields> {
+  return readBrowserPreflightForSession(cwd, status.sessionId);
+}
+
+async function readBrowserPreflightForSession(
+  cwd: string,
+  sessionId: string,
+): Promise<AskProToonFields> {
+  const metadata = await readBrowserMetadata(cwd, sessionId);
+  if (!metadata) return {};
+  const profileDir = typeof metadata.profileDir === "string" ? metadata.profileDir : undefined;
+  return compactFields({
+    profile: profileMode(profileDir),
+    profile_path: profileDir ? collapseHome(profileDir) : undefined,
+    chrome: chromeMode(metadata),
+    language: typeof metadata.acceptLanguage === "string" ? metadata.acceptLanguage : undefined,
+  });
+}
+
+async function readBrowserMetadata(
+  cwd: string,
+  sessionId: string,
+): Promise<BrowserMetadata | null> {
   try {
-    const paths = getAskProSessionPaths(cwd, status.sessionId);
+    const paths = getAskProSessionPaths(cwd, sessionId);
     const raw = await fs.readFile(paths.browser, "utf8");
-    const metadata = JSON.parse(raw) as { profileDir?: unknown };
-    return typeof metadata.profileDir === "string" ? collapseHome(metadata.profileDir) : undefined;
+    return JSON.parse(raw) as BrowserMetadata;
   } catch {
-    return undefined;
+    return null;
   }
+}
+
+function profileMode(profileDir: string | undefined): string | undefined {
+  if (!profileDir) return undefined;
+  if (askProAgentIdForManagedBrowserProfileDir(profileDir)) return "agent";
+  if (path.resolve(profileDir) === path.resolve(defaultAskProBrowserProfileDir())) return "shared";
+  if (isAskProManagedBrowserProfileDir(profileDir)) return "shared";
+  return "legacy";
+}
+
+function chromeMode(metadata: BrowserMetadata): string | undefined {
+  if (typeof metadata.chromeMode === "string") return metadata.chromeMode;
+  return undefined;
+}
+
+interface BrowserMetadata {
+  status?: string;
+  profileDir?: string;
+  agentId?: string | null;
+  acceptLanguage?: string;
+  chromeMode?: string;
+  runtime?: unknown;
+}
+
+function compactFields(fields: AskProToonFields): AskProToonFields {
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
 
 function collapseHome(filePath: string): string {
@@ -436,7 +540,12 @@ function collapseHome(filePath: string): string {
 
 function classifyCliError(message: string): string {
   const normalized = message.toLowerCase();
-  if (normalized.includes("requires a question") || normalized.includes("no ask-pro sessions")) {
+  if (
+    normalized.includes("requires a question") ||
+    normalized.includes("no ask-pro sessions") ||
+    normalized.includes("use either a question argument or --prompt-file") ||
+    normalized.includes("--prompt-file - requires piped stdin")
+  ) {
     return "usage";
   }
   if (normalized.includes("auth") || normalized.includes("login")) {

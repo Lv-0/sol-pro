@@ -120,12 +120,21 @@ function buildModelSelectionExpression(
     const wantsPro = TARGET_KIND === 'pro' || normalizedTokens.includes('pro');
     const wantsInstant = TARGET_KIND === 'instant' || normalizedTokens.includes('instant');
     const wantsThinking = TARGET_KIND === 'thinking' || normalizedTokens.includes('thinking');
+    const labelHasToken = (label, token) => {
+      if (!token) return true;
+      const normalizedToken = normalize(token);
+      if (!normalizedToken) return true;
+      if (/^[a-z0-9]+$/.test(normalizedToken)) {
+        return label.split(' ').includes(normalizedToken);
+      }
+      return label.includes(normalizedToken);
+    };
     const matchesVisibleAlias = (value) => {
       const label = normalize(value);
       return VISIBLE_ALIASES.some((alias) => {
         const includes = alias.includes || [];
         const excludes = alias.excludes || [];
-        return includes.every((token) => label.includes(token)) && excludes.every((token) => !label.includes(token));
+        return includes.every((token) => labelHasToken(label, token)) && excludes.every((token) => !labelHasToken(label, token));
       });
     };
     const versionFromText = (value) => {

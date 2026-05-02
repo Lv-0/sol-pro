@@ -40,6 +40,7 @@ const CHATGPT_BROWSER_MODEL_TARGETS: ChatGptBrowserModelTarget[] = [
     version: "5-5",
     kind: "pro",
     visibleAliases: [
+      { includes: ["pro"], excludes: ["thinking", "instant", "search", "project"] },
       { includes: ["pro", "extended"], excludes: ["thinking"] },
       { includes: ["pro", "langer"], excludes: ["thinking"] },
     ],
@@ -325,6 +326,7 @@ function visibleAliasesFor(
 ): ChatGptVisibleAlias[] {
   if (version === "5-5" && kind === "pro") {
     return [
+      { includes: ["pro"], excludes: ["thinking", "instant", "search", "project"] },
       { includes: ["pro", "extended"], excludes: ["thinking"] },
       { includes: ["pro", "langer"], excludes: ["thinking"] },
     ];

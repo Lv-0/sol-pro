@@ -13,6 +13,7 @@ import {
 const resumeBrowserSessionMock = vi.fn(async () => ({
   answerText: "reattached answer",
   answerMarkdown: "# Reattached\n",
+  chromeMode: "reused_devtools",
 }));
 const runBrowserModeMock = vi.fn(async () => ({
   answerText: "agent answer",
@@ -31,7 +32,7 @@ vi.mock("../../src/browser/chromeLifecycle.js", () => ({
   closeTab: closeTabMock,
 }));
 
-const { resumeAskProBrowserSession, runAskProBrowserSession } =
+const { AskProNeedsAuthError, resumeAskProBrowserSession, runAskProBrowserSession } =
   await import("../../src/ask-pro/browserRunner.js");
 
 const tempDirs: string[] = [];
@@ -113,6 +114,151 @@ describe("ask-pro browser runner", () => {
       config: {
         thinkingTime: "extended",
       },
+    });
+  });
+
+  test("marks preamble-only answers incomplete when no response zip exists", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-incomplete-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Give the actual answer.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock.mockResolvedValueOnce({
+      answerText: "I'll inspect the bundle and create the files.",
+      answerMarkdown: "I'll inspect the bundle and create the files.",
+      browserTransport: "launched",
+    });
+
+    await runAskProBrowserSession({ cwd, sessionId: session.id });
+
+    const { status } = await readAskProStatus({ cwd, sessionId: session.id });
+    expect(status).toMatchObject({
+      status: "INCOMPLETE_ANSWER",
+      reason: "preamble_without_artifacts",
+    });
+  });
+
+  test("asks browser runner to stay open for incomplete-answer debugging", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-incomplete-keep-open-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Give the actual answer.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock.mockResolvedValueOnce({
+      answerText: "I'll inspect the bundle and create the files.",
+      answerMarkdown: "I'll inspect the bundle and create the files.",
+      browserTransport: "launched",
+    });
+
+    await runAskProBrowserSession({ cwd, sessionId: session.id });
+
+    const firstCall = runBrowserModeMock.mock.calls[0] as unknown[] | undefined;
+    const options = firstCall?.[0] as
+      | {
+          afterAnswerCb?: (context: {
+            Runtime: { evaluate: () => Promise<{ result: { value: unknown } }> };
+            Page: undefined;
+            Input: undefined;
+            answer: { text: string; markdown: string };
+          }) => Promise<{ keepBrowserOpen?: boolean } | undefined>;
+        }
+      | undefined;
+    const result = await options?.afterAnswerCb?.({
+      Runtime: {
+        evaluate: async () => ({ result: { value: { status: "unavailable" } } }),
+      },
+      Page: undefined,
+      Input: undefined,
+      answer: {
+        text: "I'll inspect the bundle and create the files.",
+        markdown: "I'll inspect the bundle and create the files.",
+      },
+    });
+
+    expect(result).toEqual({ keepBrowserOpen: true });
+  });
+
+  test("marks broader deferred-work preambles incomplete when no response zip exists", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-incomplete-broad-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Give the actual answer.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock.mockResolvedValueOnce({
+      answerText: "Sure, I'll take a look and get back to you with the full analysis.",
+      answerMarkdown: "Sure, I'll take a look and get back to you with the full analysis.",
+      browserTransport: "launched",
+    });
+
+    await runAskProBrowserSession({ cwd, sessionId: session.id });
+
+    const { status } = await readAskProStatus({ cwd, sessionId: session.id });
+    expect(status).toMatchObject({
+      status: "INCOMPLETE_ANSWER",
+      reason: "preamble_without_artifacts",
+    });
+  });
+
+  test("keeps short substantive inline answers completed", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-short-answer-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Give the actual answer.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock.mockResolvedValueOnce({
+      answerText: "I'll review auth first; recommendation: use the shared profile and resume.",
+      answerMarkdown: "I'll review auth first; recommendation: use the shared profile and resume.",
+      browserTransport: "launched",
+    });
+
+    await runAskProBrowserSession({ cwd, sessionId: session.id });
+
+    const { status } = await readAskProStatus({ cwd, sessionId: session.id });
+    expect(status.status).toBe("COMPLETED");
+  });
+
+  test("auth failure after runtime hint preserves runtime metadata", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-auth-runtime-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Auth after runtime.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[0] as { runtimeHintCb?: (runtime: unknown) => void };
+      await options.runtimeHintCb?.({
+        chromePort: 9230,
+        chromeHost: "127.0.0.1",
+        chromeTargetId: "auth-runtime-target",
+      });
+      throw new Error("session expired during recheck");
+    });
+
+    await expect(runAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
+      /authentication is required/i,
+    );
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; runtime?: { chromePort?: number }; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "needs_user_auth",
+      runtime: { chromePort: 9230 },
+      reason: "auth_required",
     });
   });
 
@@ -303,7 +449,7 @@ describe("ask-pro browser runner", () => {
     });
   });
 
-  test("persists implicit temporary chat metadata before browser automation runs", async () => {
+  test("finalizes implicit temporary metadata after early browser failure", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-temporary-metadata-"));
     tempDirs.push(cwd);
     const session = await createAskProSession({
@@ -320,10 +466,78 @@ describe("ask-pro browser runner", () => {
 
     const metadata = JSON.parse(
       await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
-    ) as { url?: string; status?: string };
+    ) as { url?: string; status?: string; chromeMode?: string; acceptLanguage?: string };
     expect(metadata).toMatchObject({
-      status: "pending",
+      status: "failed",
       url: "https://chatgpt.com/?temporary-chat=true",
+      acceptLanguage: "en-US,en",
+    });
+    expect(metadata.chromeMode).toBeUndefined();
+  });
+
+  test("preserves launched Chrome mode for resumable assistant timeouts", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-timeout-preflight-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Timeout after launch.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[0] as { runtimeHintCb?: (runtime: unknown) => void };
+      await options.runtimeHintCb?.({
+        chromePort: 9227,
+        chromeHost: "127.0.0.1",
+        chromeTargetId: "timeout-target",
+      });
+      throw new Error("assistant response timed out");
+    });
+
+    await expect(runAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
+      /assistant response timed out/,
+    );
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; chromeMode?: string; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "wait_timed_out",
+      chromeMode: "launched",
+      reason: "assistant_timeout",
+    });
+  });
+
+  test("preserves launched Chrome mode for post-launch failures", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-post-launch-fail-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Fail after launch.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[0] as { runtimeHintCb?: (runtime: unknown) => void };
+      await options.runtimeHintCb?.({
+        chromePort: 9229,
+        chromeHost: "127.0.0.1",
+        chromeTargetId: "failed-target",
+      });
+      throw new Error("model picker broke");
+    });
+
+    await expect(runAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
+      /model picker broke/,
+    );
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; chromeMode?: string; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "failed",
+      chromeMode: "launched",
+      reason: "model picker broke",
     });
   });
 
@@ -549,8 +763,270 @@ describe("ask-pro browser runner", () => {
     });
     const metadata = JSON.parse(
       await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
-    ) as { thinkingTime?: string };
+    ) as { thinkingTime?: string; chromeMode?: string; acceptLanguage?: string };
     expect(metadata.thinkingTime).toBe("extended");
+    expect(metadata.chromeMode).toBe("reused_devtools");
+    expect(metadata.acceptLanguage).toBe("en-US,en");
+  });
+
+  test("reattach auth failure refreshes browser preflight metadata", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-auth-preflight-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Resume after auth expiry.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "running",
+        chromeMode: "launched",
+        profileDir: path.join(os.homedir(), ".agents", "skills", "ask-pro", "browser-profile"),
+        runtime: {
+          chromePort: 9225,
+          chromeHost: "127.0.0.1",
+          tabUrl: "https://chatgpt.com/c/test-auth-expired",
+        },
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "WAIT_TIMED_OUT" });
+    resumeBrowserSessionMock.mockRejectedValueOnce(new Error("login required"));
+
+    await expect(resumeAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toBeInstanceOf(
+      AskProNeedsAuthError,
+    );
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; chromeMode?: string; acceptLanguage?: string; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "needs_user_auth",
+      chromeMode: "reused_devtools",
+      acceptLanguage: "en-US,en",
+      reason: "login_page_detected",
+    });
+  });
+
+  test("reattach non-auth failure clears in-progress Chrome mode", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-fail-preflight-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Resume after generic failure.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "running",
+        profileDir: path.join(os.homedir(), ".agents", "skills", "ask-pro", "browser-profile"),
+        runtime: {
+          chromePort: 9226,
+          chromeHost: "127.0.0.1",
+          tabUrl: "https://chatgpt.com/c/test-generic-failure",
+        },
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "WAIT_TIMED_OUT" });
+    resumeBrowserSessionMock.mockRejectedValueOnce(new Error("model picker broke"));
+
+    await expect(resumeAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
+      /model picker broke/,
+    );
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; chromeMode?: string; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "failed",
+      reason: "model picker broke",
+    });
+    expect(metadata.chromeMode).toBeUndefined();
+  });
+
+  test("reattach assistant timeout remains resumable", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-timeout-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Resume and timeout again.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "running",
+        chromeMode: "launched",
+        profileDir: path.join(os.homedir(), ".agents", "skills", "ask-pro", "browser-profile"),
+        runtime: {
+          chromePort: 9228,
+          chromeHost: "127.0.0.1",
+          tabUrl: "https://chatgpt.com/c/test-timeout-again",
+        },
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "WAIT_TIMED_OUT" });
+    resumeBrowserSessionMock.mockRejectedValueOnce(new Error("assistant response timed out"));
+
+    await expect(resumeAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
+      /assistant response timed out/,
+    );
+
+    const { status } = await readAskProStatus({ cwd, sessionId: session.id });
+    expect(status.status).toBe("WAIT_TIMED_OUT");
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; chromeMode?: string; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "wait_timed_out",
+      chromeMode: "reused_devtools",
+      reason: "assistant_timeout",
+    });
+  });
+
+  test("reattach auth failure preserves relaunch Chrome mode", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-relaunch-auth-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Resume after relaunch auth failure.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "running",
+        chromeMode: "launched",
+        profileDir: path.join(os.homedir(), ".agents", "skills", "ask-pro", "browser-profile"),
+        runtime: {
+          chromePort: 9231,
+          chromeHost: "127.0.0.1",
+          tabUrl: "https://chatgpt.com/c/test-relaunch-auth",
+        },
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "WAIT_TIMED_OUT" });
+    resumeBrowserSessionMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const deps = args[3] as { chromeModeCb?: (mode: string) => Promise<void> };
+      await deps.chromeModeCb?.("relaunched");
+      throw new Error("login required");
+    });
+
+    await expect(resumeAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toBeInstanceOf(
+      AskProNeedsAuthError,
+    );
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; chromeMode?: string; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "needs_user_auth",
+      chromeMode: "relaunched",
+      reason: "login_page_detected",
+    });
+  });
+
+  test("reattach timeout preserves relaunch Chrome mode", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-relaunch-timeout-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Resume after relaunch timeout.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "running",
+        chromeMode: "launched",
+        profileDir: path.join(os.homedir(), ".agents", "skills", "ask-pro", "browser-profile"),
+        runtime: {
+          chromePort: 9232,
+          chromeHost: "127.0.0.1",
+          tabUrl: "https://chatgpt.com/c/test-relaunch-timeout",
+        },
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "WAIT_TIMED_OUT" });
+    resumeBrowserSessionMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const deps = args[3] as { chromeModeCb?: (mode: string) => Promise<void> };
+      await deps.chromeModeCb?.("relaunched");
+      throw new Error("assistant response timed out");
+    });
+
+    await expect(resumeAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
+      /assistant response timed out/,
+    );
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; chromeMode?: string; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "wait_timed_out",
+      chromeMode: "relaunched",
+      reason: "assistant_timeout",
+    });
+  });
+
+  test("reattach generic failure preserves relaunch Chrome mode", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-relaunch-fail-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Resume after relaunch failure.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "running",
+        chromeMode: "launched",
+        profileDir: path.join(os.homedir(), ".agents", "skills", "ask-pro", "browser-profile"),
+        runtime: {
+          chromePort: 9233,
+          chromeHost: "127.0.0.1",
+          tabUrl: "https://chatgpt.com/c/test-relaunch-fail",
+        },
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "WAIT_TIMED_OUT" });
+    resumeBrowserSessionMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const deps = args[3] as { chromeModeCb?: (mode: string) => Promise<void> };
+      await deps.chromeModeCb?.("relaunched");
+      throw new Error("model picker broke after relaunch");
+    });
+
+    await expect(resumeAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
+      /model picker broke after relaunch/,
+    );
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { status?: string; chromeMode?: string; reason?: string };
+    expect(metadata).toMatchObject({
+      status: "failed",
+      chromeMode: "relaunched",
+      reason: "model picker broke after relaunch",
+    });
   });
 
   test("reattach without runtime metadata reopens the managed browser submission", async () => {

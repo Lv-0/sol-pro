@@ -16,6 +16,7 @@ export type AskProStatus =
   | "SUBMITTED"
   | "WAITING"
   | "WAIT_TIMED_OUT"
+  | "INCOMPLETE_ANSWER"
   | "READY_TO_HARVEST"
   | "HARVESTED"
   | "COMPLETED"
@@ -52,6 +53,7 @@ export interface AskProStatusFile {
   resumeCommand: string;
   harvestCommand: string;
   dryRun: boolean;
+  artifacts?: boolean;
   thinkingTime?: "extended";
   temporary?: boolean;
   reason?: string;
@@ -96,11 +98,13 @@ export async function createAskProSession({
   question,
   filePatterns,
   dryRun,
+  artifacts = false,
 }: {
   cwd: string;
   question: string;
   filePatterns: string[];
   dryRun: boolean;
+  artifacts?: boolean;
 }): Promise<AskProSession> {
   const trimmedQuestion = question.trim();
   if (!trimmedQuestion) {
@@ -145,9 +149,10 @@ export async function createAskProSession({
     resumeCommand: `ask-pro --resume ${sessionId}`,
     harvestCommand: `ask-pro --harvest ${sessionId}`,
     dryRun,
+    artifacts,
   };
 
-  const submittedPrompt = renderSubmittedPrompt(trimmedQuestion);
+  const submittedPrompt = renderSubmittedPrompt(question, artifacts);
   const manifestMarkdown = renderManifestMarkdown(manifest);
   const browserMetadata = {
     schemaVersion: 1,
@@ -360,7 +365,7 @@ async function collectContextFiles({
   includedFiles: AskProIncludedFile[];
   excludedFiles: AskProExcludedFile[];
 }> {
-  const patterns = filePatterns.length > 0 ? filePatterns : [];
+  const patterns = await normalizeFilePatterns(cwd, filePatterns);
   const matched =
     patterns.length > 0
       ? await fg(patterns, {
@@ -371,15 +376,92 @@ async function collectContextFiles({
           ignore: DEFAULT_EXCLUDES,
         })
       : [];
-  const includedFiles = matched.sort().map((entry) => ({
-    path: normalizeManifestPath(entry),
-    reason: "Matched by --files pattern.",
-  }));
+  const realCwd = await realpathIfExists(cwd);
+  const includedFiles = await Promise.all(
+    matched.sort().map(async (entry) => ({
+      path: await normalizeMatchedFilePath(cwd, realCwd, entry),
+      reason: "Matched by --files pattern.",
+    })),
+  );
   const excludedFiles = DEFAULT_EXCLUDES.map((entry) => ({
     path: entry,
     reason: "Default strict exclude.",
   }));
   return { includedFiles, excludedFiles };
+}
+
+async function normalizeFilePatterns(cwd: string, filePatterns: string[]): Promise<string[]> {
+  return Promise.all(filePatterns.map((pattern) => normalizeFilePattern(cwd, pattern)));
+}
+
+async function normalizeFilePattern(cwd: string, pattern: string): Promise<string> {
+  const normalized = pattern.replace(/\\/g, "/");
+  const asPath = path.resolve(cwd, pattern);
+  const realCwd = await realpathIfExists(cwd);
+  if (path.isAbsolute(pattern)) {
+    const realTarget = await realpathIfExists(asPath);
+    const realRelative = path.relative(realCwd, realTarget);
+    if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+      throw new Error(`--files path must be inside the project cwd: ${pattern}`);
+    }
+    const relative = path.relative(cwd, asPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(`--files path must be inside the project cwd: ${pattern}`);
+    }
+    return expandDirectoryPattern(asPath, normalizeManifestPath(relative) || ".");
+  }
+  const realTarget = await realpathIfExists(asPath);
+  const realRelative = path.relative(realCwd, realTarget);
+  if (
+    (await pathExists(asPath)) &&
+    (realRelative.startsWith("..") || path.isAbsolute(realRelative))
+  ) {
+    throw new Error(`--files path must be inside the project cwd: ${pattern}`);
+  }
+  return expandDirectoryPattern(asPath, normalized);
+}
+
+async function normalizeMatchedFilePath(
+  cwd: string,
+  realCwd: string,
+  entry: string,
+): Promise<string> {
+  const absolute = path.resolve(cwd, entry);
+  const realEntry = await fs.realpath(absolute);
+  const realRelative = path.relative(realCwd, realEntry);
+  if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    throw new Error(`--files path must be inside the project cwd: ${entry}`);
+  }
+  return normalizeManifestPath(realRelative);
+}
+
+async function realpathIfExists(filePath: string): Promise<string> {
+  try {
+    return await fs.realpath(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function expandDirectoryPattern(absolutePath: string, pattern: string): Promise<string> {
+  try {
+    const stat = await fs.stat(absolutePath);
+    if (stat.isDirectory()) {
+      return `${pattern.replace(/\/+$/g, "")}/**`;
+    }
+  } catch {
+    // Missing paths may be globs; let fast-glob handle them.
+  }
+  return pattern;
 }
 
 function buildSessionId(question: string, now = new Date()): string {
@@ -398,7 +480,7 @@ function slugify(question: string): string {
 }
 
 function normalizeManifestPath(entry: string): string {
-  return entry.replace(/\\/g, "/");
+  return entry.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
 function redactSecrets(content: string, filePath: string, findings: string[]): string {
@@ -428,13 +510,14 @@ function redactSecretsForLog(message: string): string {
   return redactSecrets(message, "log", findings);
 }
 
-function renderSubmittedPrompt(question: string): string {
+function renderSubmittedPrompt(question: string, artifacts: boolean): string {
+  const artifactRequest = artifacts
+    ? "\nIf file generation is available, also create a downloadable zip named ask-pro-response.zip. It should contain IMPLEMENTATION_PLAN.md, TASKS.json, TEST_PLAN.md, RISK_REGISTER.md, FILES_TO_EDIT.md, and REPO_CONTEXT_USED.md. If you cannot create a zip, return the same content in markdown sections.\n"
+    : "";
   return `${question}
 
 I attached a context bundle named CONTEXT.zip. Use the files inside it as the authoritative repo context for this question.
-
-If file generation is available, also create a downloadable zip named ask-pro-response.zip. It should contain IMPLEMENTATION_PLAN.md, TASKS.json, TEST_PLAN.md, RISK_REGISTER.md, FILES_TO_EDIT.md, and REPO_CONTEXT_USED.md. If you cannot create a zip, return the same content in markdown sections.
-
+${artifactRequest}
 Be direct and practical. Prefer boring, reliable implementation choices over cleverness. Do not ask the calling agent to execute generated scripts automatically.
 `;
 }

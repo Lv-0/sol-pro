@@ -163,7 +163,7 @@ describe("browser model selection matchers", () => {
     expect(result).toEqual({ status: "button-missing", hint: { temporaryChat: true } });
   });
 
-  it("does not accept a generic Pro pill as gpt-5.5-pro under select strategy", async () => {
+  it("accepts a generic Pro pill as the latest Pro target", async () => {
     const proChip = new FakeElement("Pro", {
       "aria-haspopup": "menu",
       class: "__composer-pill __composer-pill--neutral",
@@ -171,6 +171,25 @@ describe("browser model selection matchers", () => {
     const result = await runModelSelectionExpression("gpt-5.5-pro", new FakeDocument([proChip]), {
       fastTimeout: true,
     });
+
+    expect(result).toEqual({ status: "already-selected", label: "Pro" });
+  });
+
+  it("does not treat Projects as a generic Pro option", async () => {
+    const modelButton = new FakeElement("Standard", {
+      "aria-haspopup": "menu",
+      class: "__composer-pill __composer-pill--neutral",
+    });
+    const option = new FakeElement("Projects", {}, [], () => {
+      modelButton.textContent = "Projects";
+    });
+    const menu = new FakeElement("", { role: "menu" }, [option]);
+
+    const result = await runModelSelectionExpression(
+      "gpt-5.5-pro",
+      new FakeDocument([modelButton], [menu]),
+      { fastTimeout: true },
+    );
 
     expect(result).toMatchObject({ status: "option-not-found" });
   });

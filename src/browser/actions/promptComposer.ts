@@ -430,6 +430,7 @@ export async function submitPrompt(
   } else {
     logger("Clicked send button");
   }
+  await defocusStopButtonAfterSubmit(runtime, logger);
 
   const commitTimeoutMs = Math.max(60_000, deps.inputTimeoutMs ?? 0);
   // Learned: the send button can succeed but the turn doesn't appear immediately; verify commit via turns/stop button.
@@ -440,6 +441,60 @@ export async function submitPrompt(
     logger,
     deps.baselineTurns ?? undefined,
   );
+}
+
+async function defocusStopButtonAfterSubmit(
+  Runtime: ChromeClient["Runtime"],
+  logger?: BrowserLogger,
+): Promise<void> {
+  const stopSelectorLiteral = JSON.stringify(STOP_BUTTON_SELECTOR);
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const { result } = await Runtime.evaluate({
+      expression: `(() => {
+        const stop = document.querySelector(${stopSelectorLiteral});
+        const isVisible = (node) => {
+          if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+          const rect = node.getBoundingClientRect();
+          const style = window.getComputedStyle?.(node);
+          return rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none';
+        };
+        if (!stop || !isVisible(stop)) {
+          return { changed: false, reason: 'no-visible-stop' };
+        }
+        let sink = document.getElementById('__ask_pro_focus_sink__');
+        if (!sink) {
+          sink = document.createElement('div');
+          sink.id = '__ask_pro_focus_sink__';
+          sink.tabIndex = -1;
+          sink.setAttribute('aria-hidden', 'true');
+          sink.style.position = 'fixed';
+          sink.style.left = '-10000px';
+          sink.style.top = '-10000px';
+          sink.style.width = '1px';
+          sink.style.height = '1px';
+          sink.style.opacity = '0';
+          sink.style.pointerEvents = 'none';
+          document.body.appendChild(sink);
+        }
+        sink.focus({ preventScroll: true });
+        const active = document.activeElement;
+        const stopFocused = Boolean(active && (active === stop || stop.contains(active)));
+        return { changed: active === sink, stopFocused };
+      })()`,
+      returnByValue: true,
+    });
+    const value = result.value as { changed?: boolean; reason?: string } | undefined;
+    if (value?.changed) {
+      logger?.("Moved focus away from ChatGPT stop button");
+      return;
+    }
+    if (value?.reason === "no-visible-stop") {
+      await delay(100);
+      continue;
+    }
+    return;
+  }
 }
 
 export async function clearPromptComposer(Runtime: ChromeClient["Runtime"], logger: BrowserLogger) {
@@ -870,5 +925,6 @@ export const __test__ = {
   ensureComposerHealthy,
   readComposerSnapshot,
   isPromptTooLarge,
+  defocusStopButtonAfterSubmit,
   verifyPromptCommitted,
 };
