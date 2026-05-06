@@ -20,6 +20,7 @@ import {
   closeTab,
   closeRemoteChromeTarget,
   closeChromeGracefully,
+  restoreChromeWindowByPid,
 } from "./chromeLifecycle.js";
 import { syncCookies } from "./cookies.js";
 import {
@@ -43,6 +44,8 @@ import { INPUT_SELECTORS } from "./constants.js";
 import { uploadAttachmentViaDataTransfer } from "./actions/remoteFileTransfer.js";
 import { ensureThinkingTime } from "./actions/thinkingTime.js";
 import { startThinkingStatusMonitor } from "./actions/thinkingStatus.js";
+import { createPostSubmitInputGuard } from "./actions/inputGuard.js";
+import { setChromeWindowState } from "./actions/windowState.js";
 import { estimateTokenCount, withRetries, delay } from "./utils.js";
 import { formatElapsed } from "./format.js";
 import { CHATGPT_URL, CONVERSATION_TURN_SELECTOR, DEFAULT_MODEL_STRATEGY } from "./constants.js";
@@ -88,13 +91,14 @@ function redactBrowserConfigForDebugLog(config: Record<string, unknown>): Record
   return redacted;
 }
 
-function isCloudflareChallengeError(error: unknown): error is BrowserAutomationError {
+function isHumanInterventionError(error: unknown): error is BrowserAutomationError {
   if (!(error instanceof BrowserAutomationError)) return false;
-  return (error.details as { stage?: string } | undefined)?.stage === "cloudflare-challenge";
+  const stage = (error.details as { stage?: string } | undefined)?.stage;
+  return stage === "login-required" || stage === "cloudflare-challenge";
 }
 
 function shouldPreserveBrowserOnError(error: unknown, headless: boolean): boolean {
-  return !headless && isCloudflareChallengeError(error);
+  return !headless && isHumanInterventionError(error);
 }
 
 export function shouldPreserveBrowserOnErrorForTest(error: unknown, headless: boolean): boolean {
@@ -189,6 +193,124 @@ function listIgnoredRemoteChromeFlags(config: {
     config.keepBrowser ? "--browser-keep-browser" : null,
     !config.attachRunning && config.chromePath ? "--browser-chrome-path" : null,
   ].filter((value): value is string => Boolean(value));
+}
+
+function shouldParkAuthenticatedChromeWindow(config: {
+  headless?: boolean;
+  hideWindow?: boolean;
+  browserTabRef?: string | null;
+  reusedChrome?: boolean;
+  platform?: NodeJS.Platform;
+}): boolean {
+  return (
+    (config.platform ?? process.platform) === "win32" &&
+    !config.headless &&
+    !config.hideWindow &&
+    !config.browserTabRef &&
+    !config.reusedChrome
+  );
+}
+
+function shouldEnablePostSubmitInputGuard(config: {
+  remoteChrome?: ResolvedBrowserConfig["remoteChrome"];
+  browserTabRef?: string | null;
+  reusedChrome?: boolean;
+}): boolean {
+  return !config.remoteChrome && !config.browserTabRef;
+}
+
+async function detectHumanInterventionReason(
+  Runtime: ChromeClient["Runtime"],
+): Promise<string | null> {
+  const { result } = await Runtime.evaluate({
+    expression: `(() => {
+      const title = String(document.title || '').toLowerCase();
+      const path = String(location?.pathname || '').toLowerCase();
+      const hasCloudflareScript = Boolean(document.querySelector('script[src*="challenges.cloudflare.com"]'));
+      const isVisible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        if (node.closest('[hidden],[aria-hidden="true"],[inert]')) return false;
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = node.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0 || node.hasAttribute('disabled')) return false;
+        const centerX = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
+        const centerY = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
+        const topNode = document.elementFromPoint(centerX, centerY);
+        return topNode === node || node.contains(topNode);
+      };
+      const composerVisible = Array.from(document.querySelectorAll('textarea,[contenteditable="true"]')).some(isVisible);
+      const hasConversation = Boolean(document.querySelector(${JSON.stringify(CONVERSATION_TURN_SELECTOR)}));
+      if (/\\/(auth|login|signin)/i.test(path)) return 'login';
+      if (title.includes('just a moment') || hasCloudflareScript) return 'browser_challenge';
+      if (document.querySelector('input[autocomplete="one-time-code"],input[name*="otp" i],input[id*="otp" i],iframe[src*="captcha" i],[data-testid*="challenge" i],[class*="challenge" i],[id*="challenge" i]')) {
+        return 'browser_challenge';
+      }
+      if (composerVisible) return null;
+      const challengeSurfaces = Array.from(document.querySelectorAll('form,[role="dialog"]'));
+      const challengeText = challengeSurfaces.map((node) => node.textContent || '').join(' ').toLowerCase();
+      if (/\\b(mfa|two-factor|2fa|verification code|security check|verify you are human|captcha)\\b/i.test(challengeText)) return 'browser_challenge';
+      if (hasConversation) return null;
+      const nodes = Array.from(document.querySelectorAll('button,a,[role="button"]'));
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        const label = String(node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || '')
+          .toLowerCase()
+          .trim();
+        if (/^(log in|login|sign in|signin|continue with)\\b/i.test(label)) return 'login';
+      }
+      return null;
+    })()`,
+    returnByValue: true,
+  });
+  return typeof result?.value === "string" && result.value.length > 0 ? result.value : null;
+}
+
+function startHumanInterventionRestoreMonitor({
+  Runtime,
+  logger,
+  revealWindow,
+  disableInputGuard,
+}: {
+  Runtime: ChromeClient["Runtime"];
+  logger: BrowserLogger;
+  revealWindow: (reason: string) => Promise<void>;
+  disableInputGuard: () => Promise<boolean>;
+}): { promise: Promise<never>; stop: () => void } {
+  let stopped = false;
+  let restoring = false;
+  let rejectPromise: (error: Error) => void = () => {};
+  const promise = new Promise<never>((_, reject) => {
+    rejectPromise = reject;
+  });
+  void promise.catch(() => undefined);
+  const check = async () => {
+    if (stopped || restoring) return;
+    const reason = await detectHumanInterventionReason(Runtime).catch(() => null);
+    if (!reason) return;
+    restoring = true;
+    logger(`[browser] ${reason} detected while waiting; restoring Chrome for human action.`);
+    await disableInputGuard().catch(() => false);
+    await revealWindow(`human-intervention:${reason}`).catch(() => undefined);
+    rejectPromise(
+      new BrowserAutomationError(
+        reason === "login"
+          ? "ChatGPT login appeared while ask-pro was waiting; sign in in the restored browser, then resume."
+          : "Browser challenge appeared while ask-pro was waiting; complete it in the restored browser, then resume.",
+        { stage: reason === "login" ? "login-required" : "cloudflare-challenge" },
+      ),
+    );
+  };
+  const timer = setInterval(() => void check(), 5_000);
+  timer.unref?.();
+  void check();
+  return {
+    promise,
+    stop: () => {
+      stopped = true;
+      clearInterval(timer);
+    },
+  };
 }
 
 export async function runBrowserMode(options: BrowserRunOptions): Promise<BrowserRunResult> {
@@ -347,6 +469,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let appliedCookies = 0;
   let preserveBrowserOnError = false;
   let preserveBrowserAfterComplete = false;
+  let revealAuthenticatedWindow: (reason: string) => Promise<void> = async () => {};
+  let disablePostSubmitInputGuard: () => Promise<boolean> = async () => true;
+  let stopHumanInterventionMonitor: (() => void) | null = null;
+  let humanInterventionPromise: Promise<never> | null = null;
 
   try {
     try {
@@ -394,8 +520,46 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       });
     });
     const raceWithDisconnect = <T>(promise: Promise<T>): Promise<T> =>
-      Promise.race([promise, disconnectPromise]);
+      Promise.race([
+        promise,
+        disconnectPromise,
+        ...(humanInterventionPromise ? [humanInterventionPromise] : []),
+      ]);
     const { Network, Page, Runtime, Input, DOM } = client;
+    const postSubmitInputGuard = shouldEnablePostSubmitInputGuard({
+      ...config,
+    })
+      ? createPostSubmitInputGuard(Input, logger)
+      : null;
+    disablePostSubmitInputGuard = () => postSubmitInputGuard?.disable() ?? Promise.resolve(true);
+    const shouldParkAuthenticatedWindow = shouldParkAuthenticatedChromeWindow({
+      ...config,
+      reusedChrome: Boolean(reusedChrome),
+    });
+    let authenticatedWindowParked = false;
+    const parkAuthenticatedWindow = async (reason: string): Promise<void> => {
+      if (!shouldParkAuthenticatedWindow || authenticatedWindowParked || !client) return;
+      authenticatedWindowParked = await setChromeWindowState(client, "minimized", logger, {
+        targetId: isolatedTargetId ?? lastTargetId,
+        reason,
+      });
+    };
+    revealAuthenticatedWindow = async (reason: string): Promise<void> => {
+      if (!authenticatedWindowParked) return;
+      let restored = false;
+      if (client) {
+        restored = await setChromeWindowState(client, "normal", logger, {
+          targetId: isolatedTargetId ?? lastTargetId,
+          reason,
+        });
+      }
+      if (!restored) {
+        restored = await restoreChromeWindowByPid(chrome?.pid, logger);
+      }
+      if (restored) {
+        authenticatedWindowParked = false;
+      }
+    };
 
     if (!config.headless && config.hideWindow) {
       await hideChromeWindow(chrome, logger);
@@ -544,6 +708,18 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         await emitRuntimeHint();
       }
     };
+    await captureRuntimeSnapshot().catch(() => undefined);
+    await parkAuthenticatedWindow("composer-ready");
+    if (postSubmitInputGuard) {
+      const monitor = startHumanInterventionRestoreMonitor({
+        Runtime,
+        logger,
+        revealWindow: revealAuthenticatedWindow,
+        disableInputGuard: disablePostSubmitInputGuard,
+      });
+      stopHumanInterventionMonitor = monitor.stop;
+      humanInterventionPromise = monitor.promise;
+    }
     let expectedConversationUrl: string | undefined;
     let expectedConversationId: string | undefined;
     let conversationHintInFlight: Promise<boolean> | null = null;
@@ -695,94 +871,102 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await handle.release().catch(() => undefined);
     };
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
-      const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
-      const baselineAssistantText =
-        typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
-      const attachmentNames = submissionAttachments.map((a) => path.basename(a.path));
-      let inputOnlyAttachments = false;
-      if (submissionAttachments.length > 0) {
-        if (!DOM) {
-          throw new Error("Chrome DOM domain unavailable while uploading attachments.");
-        }
-        await clearComposerAttachments(Runtime, 5_000, logger);
-        for (
-          let attachmentIndex = 0;
-          attachmentIndex < submissionAttachments.length;
-          attachmentIndex += 1
-        ) {
-          const attachment = submissionAttachments[attachmentIndex];
-          logger(`Uploading attachment: ${attachment.displayPath}`);
-          const uiConfirmed = await uploadAttachmentFile(
-            { runtime: Runtime, dom: DOM, input: Input },
-            attachment,
-            logger,
-            { expectedCount: attachmentIndex + 1 },
-          );
-          if (!uiConfirmed) {
-            inputOnlyAttachments = true;
+      try {
+        const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
+        const baselineAssistantText =
+          typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
+        const attachmentNames = submissionAttachments.map((a) => path.basename(a.path));
+        let inputOnlyAttachments = false;
+        if (submissionAttachments.length > 0) {
+          if (!DOM) {
+            throw new Error("Chrome DOM domain unavailable while uploading attachments.");
           }
-          await delay(500);
+          await clearComposerAttachments(Runtime, 5_000, logger);
+          for (
+            let attachmentIndex = 0;
+            attachmentIndex < submissionAttachments.length;
+            attachmentIndex += 1
+          ) {
+            const attachment = submissionAttachments[attachmentIndex];
+            logger(`Uploading attachment: ${attachment.displayPath}`);
+            const uiConfirmed = await raceWithDisconnect(
+              uploadAttachmentFile(
+                { runtime: Runtime, dom: DOM, input: Input },
+                attachment,
+                logger,
+                { expectedCount: attachmentIndex + 1 },
+              ),
+            );
+            if (!uiConfirmed) {
+              inputOnlyAttachments = true;
+            }
+            await delay(500);
+          }
+          // Scale timeout based on number of files: base 45s + 20s per additional file.
+          const baseTimeout = config.inputTimeoutMs ?? 30_000;
+          const perFileTimeout = 20_000;
+          const waitBudget =
+            Math.max(baseTimeout, 45_000) + (submissionAttachments.length - 1) * perFileTimeout;
+          await raceWithDisconnect(
+            waitForAttachmentCompletion(Runtime, waitBudget, attachmentNames, logger),
+          );
+          logger("All attachments uploaded");
         }
-        // Scale timeout based on number of files: base 45s + 20s per additional file.
-        const baseTimeout = config.inputTimeoutMs ?? 30_000;
-        const perFileTimeout = 20_000;
-        const waitBudget =
-          Math.max(baseTimeout, 45_000) + (submissionAttachments.length - 1) * perFileTimeout;
-        await waitForAttachmentCompletion(Runtime, waitBudget, attachmentNames, logger);
-        logger("All attachments uploaded");
-      }
-      let baselineTurns = await readConversationTurnCount(Runtime, logger);
-      // Learned: return baselineTurns so assistant polling can ignore earlier content.
-      const providerState: Record<string, unknown> = {
-        runtime: Runtime,
-        input: Input,
-        logger,
-        timeoutMs: config.timeoutMs,
-        inputTimeoutMs: config.inputTimeoutMs ?? undefined,
-        baselineTurns: baselineTurns ?? undefined,
-        attachmentNames,
-      };
-      await runProviderSubmissionFlow(chatgptDomProvider, {
-        prompt,
-        evaluate: async () => undefined,
-        delay,
-        log: logger,
-        state: providerState,
-      });
-      const providerBaselineTurns = providerState.baselineTurns;
-      if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
-        baselineTurns = providerBaselineTurns;
-      }
-      if (attachmentNames.length > 0) {
-        if (inputOnlyAttachments) {
-          logger(
-            "Attachment UI did not render before send; skipping user-turn attachment verification.",
-          );
-        } else {
-          const verified = await waitForUserTurnAttachments(
-            Runtime,
-            attachmentNames,
-            20_000,
-            logger,
-            {
-              minTurnIndex: baselineTurns ?? undefined,
-              expectedPrompt: prompt,
-              expectedConversationId,
-            },
-          );
-          if (!verified) {
+        let baselineTurns = await readConversationTurnCount(Runtime, logger);
+        // Learned: return baselineTurns so assistant polling can ignore earlier content.
+        const providerState: Record<string, unknown> = {
+          runtime: Runtime,
+          input: Input,
+          logger,
+          timeoutMs: config.timeoutMs,
+          inputTimeoutMs: config.inputTimeoutMs ?? undefined,
+          baselineTurns: baselineTurns ?? undefined,
+          attachmentNames,
+          afterSubmit: postSubmitInputGuard ? () => postSubmitInputGuard.enable() : undefined,
+        };
+        await raceWithDisconnect(
+          runProviderSubmissionFlow(chatgptDomProvider, {
+            prompt,
+            evaluate: async () => undefined,
+            delay,
+            log: logger,
+            state: providerState,
+          }),
+        );
+        const providerBaselineTurns = providerState.baselineTurns;
+        if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
+          baselineTurns = providerBaselineTurns;
+        }
+        if (attachmentNames.length > 0) {
+          if (inputOnlyAttachments) {
             logger(
-              "Sent user message attachment UI was not visible after upload; continuing because upload and send completed.",
+              "Attachment UI did not render before send; skipping user-turn attachment verification.",
             );
           } else {
-            logger("Verified attachments present on sent user message");
+            const verified = await raceWithDisconnect(
+              waitForUserTurnAttachments(Runtime, attachmentNames, 20_000, logger, {
+                minTurnIndex: baselineTurns ?? undefined,
+                expectedPrompt: prompt,
+                expectedConversationId,
+              }),
+            );
+            if (!verified) {
+              logger(
+                "Sent user message attachment UI was not visible after upload; continuing because upload and send completed.",
+              );
+            } else {
+              logger("Verified attachments present on sent user message");
+            }
           }
         }
+        // Reattach needs a /c/ URL; ChatGPT can update it late, so poll in the background.
+        scheduleConversationHint("post-submit", config.timeoutMs ?? 120_000);
+        await updateConversationHint("post-submit", 15_000).catch(() => false);
+        return { baselineTurns, baselineAssistantText };
+      } catch (error) {
+        await postSubmitInputGuard?.disable();
+        throw error;
       }
-      // Reattach needs a /c/ URL; ChatGPT can update it late, so poll in the background.
-      scheduleConversationHint("post-submit", config.timeoutMs ?? 120_000);
-      await updateConversationHint("post-submit", 15_000).catch(() => false);
-      return { baselineTurns, baselineAssistantText };
     };
     const reloadPromptComposer = async () => {
       logger("[browser] Composer became unresponsive; reloading page and retrying once.");
@@ -930,48 +1114,52 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       return rechecked;
     };
     try {
-      await ensureExpectedConversation("assistant-wait").catch(() => false);
-      answer = await waitWithThinkingMonitor(() =>
-        raceWithDisconnect(
-          waitForAssistantResponseWithReload(
-            Runtime,
-            Page,
-            config.timeoutMs,
-            logger,
-            baselineTurns ?? undefined,
-            expectedConversationUrl,
-            expectedConversationId,
+      try {
+        await ensureExpectedConversation("assistant-wait").catch(() => false);
+        answer = await waitWithThinkingMonitor(() =>
+          raceWithDisconnect(
+            waitForAssistantResponseWithReload(
+              Runtime,
+              Page,
+              config.timeoutMs,
+              logger,
+              baselineTurns ?? undefined,
+              expectedConversationUrl,
+              expectedConversationId,
+            ),
           ),
-        ),
-      );
-    } catch (error) {
-      if (isAssistantResponseTimeoutError(error)) {
-        const rechecked = await attemptAssistantRecheck().catch(() => null);
-        if (rechecked) {
-          answer = rechecked;
+        );
+      } catch (error) {
+        if (isAssistantResponseTimeoutError(error)) {
+          const rechecked = await attemptAssistantRecheck().catch(() => null);
+          if (rechecked) {
+            answer = rechecked;
+          } else {
+            await updateConversationHint("assistant-timeout", 15_000).catch(() => false);
+            await ensureExpectedConversation("assistant-timeout").catch(() => false);
+            await captureRuntimeSnapshot().catch(() => undefined);
+            const runtime = {
+              chromePid: chrome.pid,
+              chromePort: chrome.port,
+              chromeHost,
+              userDataDir,
+              chromeTargetId: lastTargetId,
+              tabUrl: lastUrl,
+              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              controllerPid: process.pid,
+            };
+            throw new BrowserAutomationError(
+              "Assistant response timed out before completion; reattach later to capture the answer.",
+              { stage: "assistant-timeout", runtime },
+              error,
+            );
+          }
         } else {
-          await updateConversationHint("assistant-timeout", 15_000).catch(() => false);
-          await ensureExpectedConversation("assistant-timeout").catch(() => false);
-          await captureRuntimeSnapshot().catch(() => undefined);
-          const runtime = {
-            chromePid: chrome.pid,
-            chromePort: chrome.port,
-            chromeHost,
-            userDataDir,
-            chromeTargetId: lastTargetId,
-            tabUrl: lastUrl,
-            conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
-            controllerPid: process.pid,
-          };
-          throw new BrowserAutomationError(
-            "Assistant response timed out before completion; reattach later to capture the answer.",
-            { stage: "assistant-timeout", runtime },
-            error,
-          );
+          throw error;
         }
-      } else {
-        throw error;
       }
+    } finally {
+      await postSubmitInputGuard?.disable();
     }
     // Ensure we store the final conversation URL even if the UI updated late.
     await updateConversationHint("post-response", 15_000);
@@ -1148,6 +1336,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         },
       });
       preserveBrowserAfterComplete = Boolean(afterAnswerResult?.keepBrowserOpen);
+      if (preserveBrowserAfterComplete) {
+        await revealAuthenticatedWindow("debug-retention");
+      }
     }
     runStatus = "complete";
     const durationMs = Date.now() - startedAt;
@@ -1174,6 +1365,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     connectionClosedUnexpectedly = connectionClosedUnexpectedly || socketClosed;
     if (shouldPreserveBrowserOnError(normalizedError, config.headless)) {
       preserveBrowserOnError = true;
+      await revealAuthenticatedWindow("manual-recovery");
       const runtime = {
         chromePid: chrome.pid,
         chromePort: chrome.port,
@@ -1226,7 +1418,23 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       normalizedError,
     );
   } finally {
+    stopHumanInterventionMonitor?.();
+    const keepBrowserOpen =
+      preserveBrowserAfterComplete ||
+      preserveBrowserOnError ||
+      (effectiveKeepBrowser && runStatus !== "complete");
     try {
+      const guardDisabled = await disablePostSubmitInputGuard();
+      if (!guardDisabled && (keepBrowserOpen || connectionClosedUnexpectedly)) {
+        logger(
+          "[browser] Post-submit input guard may still be active; retained browser may require closing and relaunching.",
+        );
+      }
+      if (keepBrowserOpen) {
+        await revealAuthenticatedWindow("browser-retained");
+      } else if (connectionClosedUnexpectedly) {
+        await revealAuthenticatedWindow("connection-lost");
+      }
       if (!connectionClosedUnexpectedly) {
         await client?.close();
       }
@@ -1247,10 +1455,6 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
     removeDialogHandler?.();
     removeTerminationHooks?.();
-    const keepBrowserOpen =
-      preserveBrowserAfterComplete ||
-      preserveBrowserOnError ||
-      (effectiveKeepBrowser && runStatus !== "complete");
     if (!keepBrowserOpen) {
       if (!connectionClosedUnexpectedly) {
         try {
@@ -1685,6 +1889,9 @@ async function runRemoteBrowserMode(
       return true;
     };
     const { Network, Page, Runtime, Input, DOM } = client;
+    const postSubmitInputGuard = shouldEnablePostSubmitInputGuard(config)
+      ? createPostSubmitInputGuard(Input, logger)
+      : null;
 
     const domainEnablers = [Network.enable({}), Page.enable(), Runtime.enable()];
     if (DOM && typeof DOM.enable === "function") {
@@ -1767,52 +1974,62 @@ async function runRemoteBrowserMode(
     }
 
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {
-      const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
-      const baselineAssistantText =
-        typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
-      const attachmentNames = submissionAttachments.map((a) => path.basename(a.path));
-      if (submissionAttachments.length > 0) {
-        if (!DOM) {
-          throw new Error("Chrome DOM domain unavailable while uploading attachments.");
+      try {
+        const baselineSnapshot = await readAssistantSnapshot(Runtime).catch(() => null);
+        const baselineAssistantText =
+          typeof baselineSnapshot?.text === "string" ? baselineSnapshot.text.trim() : "";
+        const attachmentNames = submissionAttachments.map((a) => path.basename(a.path));
+        if (submissionAttachments.length > 0) {
+          if (!DOM) {
+            throw new Error("Chrome DOM domain unavailable while uploading attachments.");
+          }
+          await clearComposerAttachments(Runtime, 5_000, logger);
+          // Use remote file transfer for remote Chrome (reads local files and injects via CDP)
+          for (const attachment of submissionAttachments) {
+            logger(`Uploading attachment: ${attachment.displayPath}`);
+            await uploadAttachmentViaDataTransfer(
+              { runtime: Runtime, dom: DOM },
+              attachment,
+              logger,
+            );
+            await delay(500);
+          }
+          // Scale timeout based on number of files: base 30s + 15s per additional file
+          const baseTimeout = config.inputTimeoutMs ?? 30_000;
+          const perFileTimeout = 15_000;
+          const waitBudget =
+            Math.max(baseTimeout, 30_000) + (submissionAttachments.length - 1) * perFileTimeout;
+          await waitForAttachmentCompletion(Runtime, waitBudget, attachmentNames, logger);
+          logger("All attachments uploaded");
         }
-        await clearComposerAttachments(Runtime, 5_000, logger);
-        // Use remote file transfer for remote Chrome (reads local files and injects via CDP)
-        for (const attachment of submissionAttachments) {
-          logger(`Uploading attachment: ${attachment.displayPath}`);
-          await uploadAttachmentViaDataTransfer({ runtime: Runtime, dom: DOM }, attachment, logger);
-          await delay(500);
+        let baselineTurns = await readConversationTurnCount(Runtime, logger);
+        const providerState: Record<string, unknown> = {
+          runtime: Runtime,
+          input: Input,
+          logger,
+          timeoutMs: config.timeoutMs,
+          inputTimeoutMs: config.inputTimeoutMs ?? undefined,
+          baselineTurns: baselineTurns ?? undefined,
+          attachmentNames,
+          afterSubmit: postSubmitInputGuard ? () => postSubmitInputGuard.enable() : undefined,
+        };
+        await runProviderSubmissionFlow(chatgptDomProvider, {
+          prompt,
+          evaluate: async () => undefined,
+          delay,
+          log: logger,
+          state: providerState,
+        });
+        const providerBaselineTurns = providerState.baselineTurns;
+        if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
+          baselineTurns = providerBaselineTurns;
         }
-        // Scale timeout based on number of files: base 30s + 15s per additional file
-        const baseTimeout = config.inputTimeoutMs ?? 30_000;
-        const perFileTimeout = 15_000;
-        const waitBudget =
-          Math.max(baseTimeout, 30_000) + (submissionAttachments.length - 1) * perFileTimeout;
-        await waitForAttachmentCompletion(Runtime, waitBudget, attachmentNames, logger);
-        logger("All attachments uploaded");
+        await updateConversationHint("post-submit", 15_000).catch(() => false);
+        return { baselineTurns, baselineAssistantText };
+      } catch (error) {
+        await postSubmitInputGuard?.disable();
+        throw error;
       }
-      let baselineTurns = await readConversationTurnCount(Runtime, logger);
-      const providerState: Record<string, unknown> = {
-        runtime: Runtime,
-        input: Input,
-        logger,
-        timeoutMs: config.timeoutMs,
-        inputTimeoutMs: config.inputTimeoutMs ?? undefined,
-        baselineTurns: baselineTurns ?? undefined,
-        attachmentNames,
-      };
-      await runProviderSubmissionFlow(chatgptDomProvider, {
-        prompt,
-        evaluate: async () => undefined,
-        delay,
-        log: logger,
-        state: providerState,
-      });
-      const providerBaselineTurns = providerState.baselineTurns;
-      if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
-        baselineTurns = providerBaselineTurns;
-      }
-      await updateConversationHint("post-submit", 15_000).catch(() => false);
-      return { baselineTurns, baselineAssistantText };
     };
     const reloadPromptComposer = async () => {
       logger("[browser] Composer became unresponsive; reloading page and retrying once.");
@@ -1953,53 +2170,58 @@ async function runRemoteBrowserMode(
       return rechecked;
     };
     try {
-      await ensureExpectedConversation("assistant-wait").catch(() => false);
-      answer = await waitWithThinkingMonitor(() =>
-        waitForAssistantResponseWithReload(
-          Runtime,
-          Page,
-          config.timeoutMs,
-          logger,
-          baselineTurns ?? undefined,
-          expectedConversationUrl,
-          expectedConversationId,
-        ),
-      );
-    } catch (error) {
-      if (isAssistantResponseTimeoutError(error)) {
-        const rechecked = await attemptAssistantRecheck().catch(() => null);
-        if (rechecked) {
-          answer = rechecked;
-        } else {
-          try {
-            const conversationUrl = expectedConversationUrl ?? (await readConversationUrl(Runtime));
-            if (conversationUrl) {
-              lastUrl = conversationUrl;
+      try {
+        await ensureExpectedConversation("assistant-wait").catch(() => false);
+        answer = await waitWithThinkingMonitor(() =>
+          waitForAssistantResponseWithReload(
+            Runtime,
+            Page,
+            config.timeoutMs,
+            logger,
+            baselineTurns ?? undefined,
+            expectedConversationUrl,
+            expectedConversationId,
+          ),
+        );
+      } catch (error) {
+        if (isAssistantResponseTimeoutError(error)) {
+          const rechecked = await attemptAssistantRecheck().catch(() => null);
+          if (rechecked) {
+            answer = rechecked;
+          } else {
+            try {
+              const conversationUrl =
+                expectedConversationUrl ?? (await readConversationUrl(Runtime));
+              if (conversationUrl) {
+                lastUrl = conversationUrl;
+              }
+            } catch {
+              // ignore
             }
-          } catch {
-            // ignore
+            await ensureExpectedConversation("assistant-timeout").catch(() => false);
+            await emitRuntimeHint();
+            const runtime = {
+              chromePort: port,
+              chromeHost: host,
+              chromeBrowserWSEndpoint: browserWSEndpoint,
+              chromeProfileRoot,
+              chromeTargetId: remoteTargetId ?? undefined,
+              tabUrl: lastUrl,
+              conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
+              controllerPid: process.pid,
+            };
+            throw new BrowserAutomationError(
+              "Assistant response timed out before completion; reattach later to capture the answer.",
+              { stage: "assistant-timeout", runtime },
+              error,
+            );
           }
-          await ensureExpectedConversation("assistant-timeout").catch(() => false);
-          await emitRuntimeHint();
-          const runtime = {
-            chromePort: port,
-            chromeHost: host,
-            chromeBrowserWSEndpoint: browserWSEndpoint,
-            chromeProfileRoot,
-            chromeTargetId: remoteTargetId ?? undefined,
-            tabUrl: lastUrl,
-            conversationId: lastUrl ? extractConversationIdFromUrl(lastUrl) : undefined,
-            controllerPid: process.pid,
-          };
-          throw new BrowserAutomationError(
-            "Assistant response timed out before completion; reattach later to capture the answer.",
-            { stage: "assistant-timeout", runtime },
-            error,
-          );
+        } else {
+          throw error;
         }
-      } else {
-        throw error;
       }
+    } finally {
+      await postSubmitInputGuard?.disable();
     }
     const baselineNormalized = baselineAssistantText
       ? normalizeForComparison(baselineAssistantText)
@@ -2205,6 +2427,9 @@ export { resolveBrowserConfig, DEFAULT_BROWSER_CONFIG } from "./config.js";
 // biome-ignore lint/style/useNamingConvention: test-only export used in vitest suite
 export const __test__ = {
   listIgnoredRemoteChromeFlags,
+  shouldParkAuthenticatedChromeWindow,
+  shouldEnablePostSubmitInputGuard,
+  detectHumanInterventionReason,
 };
 export { syncCookies } from "./cookies.js";
 export {

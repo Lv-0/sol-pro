@@ -274,6 +274,7 @@ export async function submitPrompt(
     attachmentNames?: string[];
     baselineTurns?: number | null;
     inputTimeoutMs?: number | null;
+    afterSubmit?: () => Promise<void>;
   },
   prompt: string,
   logger: BrowserLogger,
@@ -441,7 +442,7 @@ export async function submitPrompt(
   } else {
     logger("Clicked send button");
   }
-  await defocusStopButtonAfterSubmit(runtime, logger);
+  await runPostSubmitProtection(runtime, input, logger, deps.afterSubmit);
 
   const commitTimeoutMs = Math.max(60_000, deps.inputTimeoutMs ?? 0);
   // Learned: the send button can succeed but the turn doesn't appear immediately; verify commit via turns/stop button.
@@ -452,6 +453,17 @@ export async function submitPrompt(
     logger,
     deps.baselineTurns ?? undefined,
   );
+}
+
+async function runPostSubmitProtection(
+  Runtime: ChromeClient["Runtime"],
+  Input: ChromeClient["Input"],
+  logger: BrowserLogger,
+  afterSubmit?: () => Promise<void>,
+): Promise<void> {
+  await afterSubmit?.();
+  await defocusStopButtonAfterSubmit(Runtime, logger);
+  await movePointerAwayFromStopControl(Input, logger);
 }
 
 async function defocusStopButtonAfterSubmit(
@@ -488,23 +500,56 @@ async function defocusStopButtonAfterSubmit(
           sink.style.pointerEvents = 'none';
           document.body.appendChild(sink);
         }
+        const activeBefore = document.activeElement;
+        if (activeBefore && typeof activeBefore.blur === 'function') {
+          activeBefore.blur();
+        }
         sink.focus({ preventScroll: true });
         const active = document.activeElement;
         const stopFocused = Boolean(active && (active === stop || stop.contains(active)));
-        return { changed: active === sink, stopFocused };
+        const activeLabel = active
+          ? [active.getAttribute?.('aria-label'), active.getAttribute?.('title'), active.textContent]
+              .filter(Boolean)
+              .join(' ')
+              .trim()
+          : '';
+        return { changed: active === sink, stopFocused, activeLabel };
       })()`,
       returnByValue: true,
     });
-    const value = result.value as { changed?: boolean; reason?: string } | undefined;
+    const value = result.value as
+      | { changed?: boolean; reason?: string; stopFocused?: boolean; activeLabel?: string }
+      | undefined;
     if (value?.changed) {
-      logger?.("Moved focus away from ChatGPT stop button");
+      logger?.(
+        value.stopFocused
+          ? "Moved focus sink after submit, but ChatGPT stop button still reports focused"
+          : "Moved focus away from ChatGPT stop button",
+      );
       return;
+    }
+    if (value?.stopFocused) {
+      logger?.(
+        `ChatGPT stop button remained focused after defocus attempt${value.activeLabel ? ` (${value.activeLabel})` : ""}`,
+      );
     }
     if (value?.reason === "no-visible-stop") {
       await delay(100);
       continue;
     }
     return;
+  }
+}
+
+async function movePointerAwayFromStopControl(
+  Input: ChromeClient["Input"],
+  logger?: BrowserLogger,
+): Promise<void> {
+  try {
+    await Input.dispatchMouseEvent({ type: "mouseMoved", x: 1, y: 1 });
+    logger?.("Moved pointer away from ChatGPT stop control");
+  } catch {
+    // Non-fatal: the CDP input guard is the stronger stop-safety layer.
   }
 }
 
@@ -969,7 +1014,9 @@ export const __test__ = {
   ensureComposerHealthy,
   readComposerSnapshot,
   isPromptTooLarge,
+  runPostSubmitProtection,
   defocusStopButtonAfterSubmit,
+  movePointerAwayFromStopControl,
   canSubmitPromptViaEnter,
   verifyPromptCommitted,
 };
