@@ -1,28 +1,45 @@
 # ask_pro
 
-`ask_pro` is a browser-backed ChatGPT Pro escalation tool for agents.
+`ask_pro` is a browser-backed ChatGPT Pro escalation tool for coding agents.
 
-It packages a focused repo context bundle, opens ChatGPT in a persistent browser
-profile, asks the selected Pro model, waits for the answer, and stores the
-result in a local project session under `.ask-pro/`.
-
-The normal command is intentionally small:
+It gives an agent a small command surface for the moments where a second opinion
+is worth the wait: architecture calls, production-risk reviews, migrations,
+debugging strategy, and implementation planning. The agent chooses the prompt
+and context, `ask-pro` opens ChatGPT in a persistent browser profile, uploads the
+bundle, waits for Pro, and stores the result in a project-local session.
 
 ```bash
-ask-pro "Review this architecture before I implement it."
+ask-pro --no-temporary --files src --files tests "Review this implementation plan before I edit."
 ```
 
-Agent-facing use is the `$ask-pro` skill: the calling agent decides what context
-matters, writes the prompt, and lets `ask-pro` handle bundling, redaction,
-browser submission, auth gating, waiting, harvesting, and optional generated zip
-extraction.
+Status: pre-release. The CLI is usable from source, and the Codex plugin can be
+installed from a local marketplace entry. The package is not published to npm
+yet.
 
-## Manual Install
+## What It Does
 
-This package is not published yet. Clone the repo and use it locally while it
-is still in pre-release cleanup.
+- Builds a focused `CONTEXT.zip` from files the agent explicitly selects.
+- Uses a persistent Chrome profile so ChatGPT login stays human-controlled.
+- Selects ChatGPT Pro with standard thinking by default.
+- Supports `--extended` for deep, long-running Pro consults.
+- Writes compact agent-readable telemetry on stdout.
+- Harvests markdown answers by default.
+- Extracts a generated response zip only when `--artifacts` is requested.
 
-### CLI
+The coding agent still owns the work. `ask-pro` gets the consult; it does not
+apply generated code or execute generated files.
+
+## Requirements
+
+- Node.js 24+
+- pnpm 10+
+- A ChatGPT account with Pro access in the browser profile used by `ask-pro`
+
+Authentication is deliberately manual. `ask-pro` never asks for, types, reads,
+or logs passwords, MFA codes, recovery codes, session cookies, or raw auth
+tokens.
+
+## Install From Source
 
 ```bash
 git clone https://github.com/Pimpmuckl/ask-pro.git
@@ -39,49 +56,20 @@ pnpm link --global
 ask-pro "Review the staged implementation plan."
 ```
 
-Requires Node 24+.
+An eventual `npm install -g ask_pro` would install the `ask-pro` CLI only. It
+would not automatically register the Codex plugin unless Codex adds an npm-based
+plugin installer or marketplace source.
 
-If `ask-pro` is not on `PATH`, agents should use the cached plugin runner, not
-the mutable development checkout. The cached runner is refreshed by
-`pnpm run plugin:refresh` and represents the last synced plugin version:
+## Install The Codex Plugin
 
-```powershell
-node "$env:USERPROFILE\.codex\plugins\cache\jonat-local\ask-pro\local\scripts\run-cached-cli.mjs" -- --cwd C:\Code\jjagentskills --no-temporary --prompt-file .\question.md --files plugins\review-suite
-```
-
-`--files` must resolve inside the project cwd. For cross-repo cached-runner
-calls, always pass `--cwd <target-repo-root>` and keep `--files` repo-relative
-to that target repo.
-
-### Codex Plugin
-
-The CLI and Codex plugin are separate installs. The plugin is what makes
-`$ask-pro` and `$ask-pro:ask-pro` appear in Codex.
-
-Add the repo to your home marketplace file:
+The Codex plugin is what makes `$ask-pro` and `$ask-pro:ask-pro` appear in
+Codex. Add this repo to your home marketplace file:
 
 ```text
 ~/.agents/plugins/marketplace.json
 ```
 
-Example marketplace entry:
-
-```json
-{
-  "name": "ask-pro",
-  "source": {
-    "source": "local",
-    "path": "../../Code/ask-pro"
-  },
-  "policy": {
-    "installation": "AVAILABLE",
-    "authentication": "ON_USE"
-  },
-  "category": "Productivity"
-}
-```
-
-If you do not already have a home marketplace, the full file can look like:
+Example marketplace:
 
 ```json
 {
@@ -114,120 +102,104 @@ enabled = true
 ```
 
 Use your marketplace name in place of `local` if your marketplace uses another
-name.
+name. Restart or reload Codex; the skill list should include `$ask-pro` and
+`$ask-pro:ask-pro`.
 
-After restarting Codex, the skill list should include both `$ask-pro` and the
-plugin-qualified `$ask-pro:ask-pro`.
-
-When you change plugin-facing files such as `README.md`,
+After changing plugin-facing files such as `README.md`,
 `.codex-plugin/plugin.json`, or `skills/ask-pro/SKILL.md`, refresh the local
-Codex plugin cache from the repo source:
+plugin cache from the repo source:
 
-```powershell
+```bash
 pnpm run plugin:refresh
 ```
 
 The cache under `~/.codex/plugins/cache/...` is generated install state. Do not
-edit or hand-copy files there; refresh the plugin and restart or reload Codex.
-The plugin cache contains the agent-facing docs plus a built CLI snapshot for
-fallback calls. Agents should use that cached runner instead of `C:\Code\ask-pro`
-so development work in this checkout cannot affect active callers before sync.
+edit or copy files there by hand. Agents should use the cached runner, not a
+mutable development checkout, when `ask-pro` is not on `PATH`:
 
-An eventual `npm install -g ask_pro` will install the `ask-pro` CLI only. It
-will not automatically register the Codex plugin unless Codex adds an npm-based
-plugin installer or marketplace source.
+```bash
+node "$HOME/.codex/plugins/cache/<marketplace-name>/ask-pro/local/scripts/run-cached-cli.mjs" -- --cwd /path/to/repo --no-temporary --prompt-file question.md --files src
+```
+
+PowerShell equivalent:
+
+```powershell
+node "$env:USERPROFILE\.codex\plugins\cache\<marketplace-name>\ask-pro\local\scripts\run-cached-cli.mjs" -- --cwd C:\path\to\repo --no-temporary --prompt-file question.md --files src
+```
+
+In cached-runner mode, `--files` must resolve inside `--cwd`. Prefer
+repo-relative file paths.
 
 ## First Login
 
-`ask-pro` uses a dedicated Chrome profile at:
+The default persistent browser profile lives at:
 
 ```text
 ~/.agents/skills/ask-pro/browser-profile
 ```
 
-For ordinary single-agent use, leave `ASK_PRO_AGENT_ID` unset so runs reuse the
-shared persistent profile. For truly independent or concurrent agents, set a
-stable reusable `ASK_PRO_AGENT_ID` before running `ask-pro`. Use a lowercase id
-containing only letters, numbers, `.`, `_`, or `-`. Each new agent id gets its
-own persistent profile and profile lock, so throwaway ids may require another
-human login:
+For ordinary single-agent use, leave `ASK_PRO_AGENT_ID` unset so runs reuse this
+shared profile. For independent concurrent agents, set a stable reusable id:
 
-```powershell
-$env:ASK_PRO_AGENT_ID = "review-t1"
-ask-pro "Review this migration plan."
-Remove-Item Env:ASK_PRO_AGENT_ID
+```bash
+ASK_PRO_AGENT_ID=review-t1 ask-pro --no-temporary "Review this migration plan."
 ```
 
-That profile lives under an agent-specific directory. The final directory name
-includes a stable hash suffix so similar agent names cannot collide:
+That creates an isolated profile under:
 
 ```text
 ~/.agents/skills/ask-pro/agents/review-t1-<hash>/browser-profile
 ```
 
-On the first browser run, ChatGPT may ask you to sign in, complete MFA, or clear
-a browser challenge. Authentication is human-controlled: `ask-pro` never asks
-for passwords, MFA codes, recovery codes, cookies, or raw auth tokens.
-
-If auth is needed, the run records the session and prints a compact
-agent-readable state with a resume command. Log in in the opened browser, then
-resume:
+Each new profile may need a human login. If auth is required, `ask-pro` records
+the session and prints a compact state with a resume command. Log in in the
+opened browser, then resume:
 
 ```bash
 ask-pro --resume <session-id>
 ```
 
-Browser runs can take a long time. `ask-pro` uses normal Pro thinking effort by
-default. For a deliberate long-haul escalation, pass `--extended`:
+## Temporary Chat
 
-```bash
-ask-pro --extended "Review this architecture decision."
-```
-
-Use `--extended` for difficult architecture questions, production-risk reviews,
-and implementation-plan packages where a multi-hour wait is acceptable.
-When ChatGPT labels the model row simply as `Pro`, `ask-pro` treats that as the
-current latest Pro target and only uses exact version strings as hints.
-
-By default, fresh runs open ChatGPT Temporary Chat first:
+Fresh runs try ChatGPT Temporary Chat first:
 
 ```text
 https://chatgpt.com/?temporary-chat=true
 ```
 
-If the current ChatGPT account/UI does not expose Pro in Temporary Chat,
-`ask-pro` automatically retries the fresh default run in normal ChatGPT. Use
-`--temporary` only when Temporary Chat is required and falling back to normal
-ChatGPT would be wrong:
+If the current account or UI does not expose Pro in Temporary Chat, `ask-pro`
+automatically retries the fresh default run in normal ChatGPT. Use
+`--temporary` only when Temporary Chat is required and fallback would be wrong.
+
+For repo advisories, large bundles, review rounds, or anything where recovery
+matters, prefer `--no-temporary`:
 
 ```bash
-ask-pro --temporary "Review this sensitive migration plan."
+ask-pro --no-temporary --prompt-file question.md --files src
 ```
 
 Temporary Chat sessions are less recoverable if the browser or tab is closed
-before harvest. To force a run or retry outside Temporary Chat, use
-`--no-temporary`:
+before harvest. Non-temporary runs can surface a recoverable `conversation_url`
+when ChatGPT provides one.
+
+## Thinking Effort
+
+Normal Pro thinking is the default. Use `--extended` only for difficult
+architecture questions, production-risk reviews, or implementation-plan packages
+where a multi-hour wait is acceptable:
 
 ```bash
-ask-pro --no-temporary --resume <session-id>
+ask-pro --extended --no-temporary --prompt-file architecture-question.md --files docs --files src
 ```
 
-For repo advisories, large bundles, review rounds, or anything where recovery
-matters, prefer `--no-temporary` from the start. Temporary Chat is best reserved
-for cases where ephemeral ChatGPT history matters more than resume/recovery.
-
-While Pro is thinking, leave the launched Chrome window alone. ChatGPT can focus
-its stop control after submit; `ask-pro` moves focus to a harmless element when
-it can, but human keystrokes or clicks in the run window can still cancel a live
-answer.
+When ChatGPT labels the model row simply as `Pro`, `ask-pro` treats that as the
+current Pro target. Exact dated model strings are only hints.
 
 ## Commands
 
 ```bash
 ask-pro [options] [question...]
 ```
-
-Useful options:
 
 | Option                   | Purpose                                                                 |
 | ------------------------ | ----------------------------------------------------------------------- |
@@ -250,19 +222,22 @@ Examples:
 ```bash
 ask-pro --dry-run --files "src/**/*.ts" "Audit this slice for hidden coupling."
 ask-pro --files src/ask-pro/session.ts --files tests/ask-pro "Find missing tests."
-ask-pro --no-temporary --prompt-file question.md --files .\src
+ask-pro --no-temporary --prompt-file question.md --files src --files tests
 ask-pro --artifacts --prompt-file implementation-plan.md --files src
 ask-pro --status
-ask-pro --harvest 2026-05-01T165438-return-exactly-ask-pro-browser-login-ready
+ask-pro --harvest <session-id>
 ```
 
 Use `--prompt-file` for multiline prompts. This avoids shell quoting issues and
-keeps the exact question in `PROMPT.md`. `--files` accepts files, directories,
-and globs; Windows backslash paths and absolute paths inside the project cwd are
-normalized into stable relative manifest paths.
+keeps the exact question in `PROMPT.md`.
+
+`--files` accepts files, directories, and globs. Windows backslash paths and
+absolute paths inside the project cwd are normalized into stable relative
+manifest paths. For cross-repo calls, pass `--cwd <target-repo-root>` and keep
+`--files` repo-relative to that cwd.
 
 Add `.ask-pro/` to consuming repos' `.gitignore`. Session files are local run
-artifacts and should not show up in normal repo diffs.
+artifacts and should not show up in normal diffs.
 
 Keep context bundles focused: relevant source files, focused tests, docs that
 define the contract, known recent changes, and validation status. Avoid
@@ -270,12 +245,12 @@ whole-repo bundles unless the question is explicitly broad architecture.
 
 ## Agent Output
 
-`ask-pro` is an agent-facing CLI. Normal stdout is compact TOON-style telemetry;
-browser progress and diagnostics go to stderr/session logs. `--harvest` is the
-exception: it prints the raw `ANSWER.md` body so agents can pipe or read the Pro
-answer without metadata noise.
+`ask-pro` is agent-facing. Normal stdout is compact TOON-style telemetry;
+browser progress and diagnostics go to stderr and session logs. `--harvest` is
+the exception: it prints the raw markdown answer so agents can pipe or read the
+Pro answer without metadata noise.
 
-Example dry-run/status output:
+Example status output:
 
 ```toon
 ask_pro
@@ -303,26 +278,21 @@ ask_pro
   resume: "ask-pro --resume 2026-05-02T192156-review-this"
 ```
 
-When known, normal status records may also include `profile`, `profile_path`,
-`chrome`, `language`, and `conversation_url`. These are diagnostic hints for
-agents deciding whether a run is using the shared profile, an isolated agent
-profile, a saved DevTools session, the expected English browser steering, or a
-recoverable non-temporary ChatGPT conversation.
+When known, status records may include `profile`, `profile_path`, `chrome`,
+`language`, and `conversation_url`.
 
 Generated response zips are harvested only for `--artifacts` /
-`--response-zip` sessions. The wrapper no longer asks for a zip by default; use
-those flags only when a structured implementation bundle is useful. For normal
-inline advisory runs, use `ask-pro --harvest <session-id>` to print the markdown
+`--response-zip` sessions. The wrapper does not ask for a zip by default. For
+normal advisory runs, use `ask-pro --harvest <session-id>` to print the markdown
 answer.
 
-Completed sessions close the isolated run tab/browser by design. If the capture
-looks like a deferred-work preamble instead of a real answer, `ask-pro` marks the
-session `INCOMPLETE_ANSWER` / `preamble_without_artifacts` and may leave the
-browser open for debugging. Do not treat this as a completed consult. Try
-resume/harvest if recoverable; otherwise rerun with `--no-temporary`, a tighter
-bundle, and a more direct prompt.
+If a capture looks like a deferred-work preamble instead of a real answer,
+`ask-pro` marks the session `INCOMPLETE_ANSWER` / `preamble_without_artifacts`.
+Do not treat that as a completed consult. Try resume/harvest if recoverable;
+otherwise rerun with `--no-temporary`, a tighter bundle, and a more direct
+prompt.
 
-Default advisory prompt shape:
+Useful advisory prompt starter:
 
 ```text
 Return final markdown only. Do not answer with a preamble. Do not produce an implementation package. Rank findings by severity. Treat attached bundle as authoritative. Call out uncertainty.
@@ -354,9 +324,9 @@ Generated session data is ignored by git.
 
 ## Response Zip
 
-Markdown is always the default output. If `--artifacts` / `--response-zip` is
-set and the Pro answer exposes a `.zip` link, `ask-pro` downloads it in the
-browser context, validates it, extracts it under `pro-output/`, and writes
+Markdown is the default output. If `--artifacts` / `--response-zip` is set and
+the Pro answer exposes a `.zip` link, `ask-pro` downloads it in the browser
+context, validates it, extracts it under `pro-output/`, and writes
 `PRO_OUTPUT_MANIFEST.json`.
 
 The expected generated zip contract is:
@@ -371,27 +341,6 @@ REPO_CONTEXT_USED.md
 ```
 
 `ask-pro` never executes generated zip contents.
-
-## Agent Skill
-
-The Codex skill lives at:
-
-```text
-skills/ask-pro/SKILL.md
-```
-
-Use it when a local agent needs a second-pass ChatGPT Pro review of a hard
-engineering question. The agent should keep the context focused and include only
-files that matter to the question.
-
-## Docs
-
-Project docs live under `docs/`:
-
-- `docs/01-agent-mission.md` for the product contract.
-- `docs/05-command-surface.md` for the supported CLI.
-- `docs/07-pro-answer-zip-contract.md` for generated response bundles.
-- `docs/manual-tests.md` for opt-in browser smokes.
 
 ## Validation
 

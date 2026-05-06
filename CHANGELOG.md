@@ -137,3 +137,5 @@
 - Rewrite the README and manual smoke docs around local pre-publish usage,
   manual auth, context bundles, response zip fallback, and the reduced V1
   validation loop.
+- Polish the public README and cached-runner skill guidance for source installs
+  and local Codex plugin usage.

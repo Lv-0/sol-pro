@@ -36,8 +36,10 @@ When invoked:
    `ask-pro --no-temporary --prompt-file <path> --files "<glob>"`; do not rely
    on shell multiline quoting.
    If `ask-pro` is not on `PATH`, run the cached plugin runner instead of the
-   mutable development checkout:
-   `node "$env:USERPROFILE/.codex/plugins/cache/jonat-local/ask-pro/local/scripts/run-cached-cli.mjs" -- --cwd <target-repo-root> --no-temporary --prompt-file <path> --files "<repo-relative-glob>"`.
+   mutable development checkout. Locate it under
+   `~/.codex/plugins/cache/<marketplace-name>/ask-pro/local/scripts/run-cached-cli.mjs`,
+   then call it with:
+   `node <cached-runner> -- --cwd <target-repo-root> --no-temporary --prompt-file <path> --files "<repo-relative-glob>"`.
 6. If auth is required, stop and ask the human to log in in the opened browser.
 7. Read the CLI's compact `ask_pro` record and run the emitted `resume` or
    `harvest` command when that is the next action.
@@ -129,12 +131,12 @@ ask-pro --resume <session-id>
 ask-pro --harvest <session-id>
 ```
 
-If the binary is not on `PATH`, use the cached plugin runner. Do not run from
-`C:/Code/ask-pro`; that is the mutable development checkout and may contain
-in-flight changes that have not been synced for agents.
+If the binary is not on `PATH`, use the cached plugin runner. Do not run from a
+mutable development checkout; it may contain in-flight changes that have not
+been synced for agents.
 
 ```bash
-node "$env:USERPROFILE/.codex/plugins/cache/jonat-local/ask-pro/local/scripts/run-cached-cli.mjs" -- --cwd C:/Code/jjagentskills --no-temporary --prompt-file question.md --files plugins/review-suite
+node <cached-runner> -- --cwd /path/to/repo --no-temporary --prompt-file question.md --files src
 ```
 
 In cached-runner fallback mode, `--files` must be inside `--cwd`. Use

@@ -2,7 +2,13 @@
   "name": "ask_pro",
   "version": "0.1.0",
   "description": "Browser-backed ChatGPT Pro escalation for hard engineering questions.",
-  "keywords": [],
+  "keywords": [
+    "agents",
+    "browser-automation",
+    "chatgpt",
+    "chatgpt-pro",
+    "codex"
+  ],
   "homepage": "https://github.com/Pimpmuckl/ask-pro#readme",
   "bugs": {
     "url": "https://github.com/Pimpmuckl/ask-pro/issues"
