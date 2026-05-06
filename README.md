@@ -159,6 +159,12 @@ opened browser, then resume:
 ask-pro --resume <session-id>
 ```
 
+On Windows, after login is healthy and the ChatGPT composer is visible,
+authenticated runs may minimize freshly launched managed Chrome so the desktop is
+less distracting. Local managed Chrome also ignores accidental human input while
+Pro is answering. If login, MFA, a browser challenge, or incomplete-answer
+debugging needs human attention, `ask-pro` restores the retained browser.
+
 ## Temporary Chat
 
 Fresh runs try ChatGPT Temporary Chat first:
@@ -291,6 +297,9 @@ If a capture looks like a deferred-work preamble instead of a real answer,
 Do not treat that as a completed consult. Try resume/harvest if recoverable;
 otherwise rerun with `--no-temporary`, a tighter bundle, and a more direct
 prompt.
+
+During generation, `ask-pro` blocks browser input through CDP after submit so
+accidental human input is less likely to activate ChatGPT's Stop control.
 
 Useful advisory prompt starter:
 

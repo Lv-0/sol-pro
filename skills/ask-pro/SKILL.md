@@ -58,6 +58,12 @@ prefer `--no-temporary` from the start. Add `--temporary` only when Temporary
 Chat is required and falling back would be wrong. Temporary Chat is less
 recoverable after browser/tab loss.
 
+On Windows, after auth/composer readiness is proven, ask-pro may minimize a
+freshly launched managed Chrome window. Local managed Chrome guards browser
+input while Pro is answering. If login, MFA, a browser challenge, or
+incomplete-answer debugging needs human attention, ask-pro should restore or
+retain the browser and emit the next action.
+
 Do not set `ASK_PRO_AGENT_ID` for ordinary single-agent use; the shared
 `ask-pro` browser profile is already persistent. Set `ASK_PRO_AGENT_ID` only
 when separate agents truly need isolated browser profiles, such as concurrent
@@ -148,5 +154,6 @@ Never ask for, read, store, type, or log passwords, MFA codes, recovery codes, s
 
 Browser auth is human-controlled. Continue only after the human says the ChatGPT composer is visible.
 
-After submit, do not interact with the Chrome run window while Pro is thinking.
-ChatGPT may focus its stop control, and human input can cancel the response.
+After submit, avoid interacting with any retained Chrome run window while Pro is
+thinking. ask-pro guards input after submit, but the safest agent behavior is to
+let the run finish or resume/harvest from CLI telemetry.

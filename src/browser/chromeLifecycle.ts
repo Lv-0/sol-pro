@@ -208,6 +208,65 @@ export async function hideChromeWindow(
   }
 }
 
+export async function restoreChromeWindowByPid(
+  pid: number | undefined,
+  logger: BrowserLogger,
+  deps: {
+    platform?: NodeJS.Platform;
+    execFileAsync?: typeof execFileAsync;
+  } = {},
+): Promise<boolean> {
+  const platform = deps.platform ?? process.platform;
+  const runExecFile = deps.execFileAsync ?? execFileAsync;
+  if (platform !== "win32" || !pid) {
+    return false;
+  }
+  const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class AskProWindowRestore {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}
+"@
+$targetPid = [uint32]${pid}
+$restored = $false
+$callback = [AskProWindowRestore+EnumWindowsProc]{
+  param([IntPtr]$hWnd, [IntPtr]$lParam)
+  $windowPid = [uint32]0
+  [void][AskProWindowRestore]::GetWindowThreadProcessId($hWnd, [ref]$windowPid)
+  if ($windowPid -eq $targetPid -and [AskProWindowRestore]::IsWindowVisible($hWnd)) {
+    [void][AskProWindowRestore]::ShowWindowAsync($hWnd, 9)
+    $script:restored = $true
+  }
+  return $true
+}
+[void][AskProWindowRestore]::EnumWindows($callback, [IntPtr]::Zero)
+if (-not $restored) { exit 2 }
+`;
+  try {
+    await runExecFile(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+      {
+        windowsHide: true,
+        timeout: 5000,
+      },
+    );
+    logger("[browser] Chrome window restored by pid fallback");
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger(`[browser] Failed to restore Chrome window by pid fallback: ${message}`);
+    return false;
+  }
+}
+
 export async function connectToChrome(
   port: number,
   logger: BrowserLogger,

@@ -13,6 +13,9 @@ Read this when working on `ask_pro` from Windows and add new findings here.
   saved port for DOM inspection when a live browser needs debugging.
 - The current ChatGPT UI may show the model selector as the composer pill and
   Pro effort under Configure / `Pro thinking effort`; tests cover that shape.
+- Authenticated managed Chrome runs may minimize freshly launched Chrome after
+  the composer is ready. Auth/challenge and retained debug sessions should
+  restore the browser for human-controlled recovery.
 - The old Oracle API, MCP, Gemini, TUI, bridge, and remote-service paths are not
   V1 requirements in this fork.
 

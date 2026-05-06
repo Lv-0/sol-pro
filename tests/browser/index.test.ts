@@ -21,6 +21,13 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
     expect(shouldPreserveBrowserOnErrorForTest(error, true)).toBe(false);
   });
 
+  test("preserves the browser for headful login-required recovery errors", () => {
+    const error = new BrowserAutomationError("Login required.", {
+      stage: "login-required",
+    });
+    expect(shouldPreserveBrowserOnErrorForTest(error, false)).toBe(true);
+  });
+
   test("does not preserve the browser for unrelated browser errors", () => {
     const error = new BrowserAutomationError("other browser error", {
       stage: "execute-browser",
@@ -116,5 +123,83 @@ describe("remote Chrome option warnings", () => {
         chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       }),
     ).toContain("--browser-chrome-path");
+  });
+});
+
+describe("authenticated Chrome window parking", () => {
+  test("does not park explicit hidden-window runs", () => {
+    expect(__test__.shouldParkAuthenticatedChromeWindow({ hideWindow: true })).toBe(false);
+  });
+
+  test("does not park explicit existing-tab runs", () => {
+    expect(__test__.shouldParkAuthenticatedChromeWindow({ browserTabRef: "current" })).toBe(false);
+  });
+
+  test("does not park reused retained Chrome runs", () => {
+    expect(
+      __test__.shouldParkAuthenticatedChromeWindow({ reusedChrome: true, platform: "win32" }),
+    ).toBe(false);
+  });
+
+  test("does not park non-Windows Chrome runs", () => {
+    expect(__test__.shouldParkAuthenticatedChromeWindow({ platform: "linux" })).toBe(false);
+  });
+
+  test("parks ordinary headed managed Chrome runs", () => {
+    expect(__test__.shouldParkAuthenticatedChromeWindow({ platform: "win32" })).toBe(true);
+  });
+});
+
+describe("post-submit input guard scope", () => {
+  test("uses the guard for managed local Chrome", () => {
+    expect(__test__.shouldEnablePostSubmitInputGuard({})).toBe(true);
+  });
+
+  test("skips the guard for remote Chrome", () => {
+    expect(
+      __test__.shouldEnablePostSubmitInputGuard({
+        remoteChrome: { host: "127.0.0.1", port: 9222 },
+      }),
+    ).toBe(false);
+  });
+
+  test("skips the guard for user-managed local tabs", () => {
+    expect(__test__.shouldEnablePostSubmitInputGuard({ browserTabRef: "current" })).toBe(false);
+  });
+
+  test("uses the guard for reused retained managed Chrome", () => {
+    expect(__test__.shouldEnablePostSubmitInputGuard({ reusedChrome: true })).toBe(true);
+  });
+});
+
+describe("human intervention detection", () => {
+  test("detects login/challenge reasons from the page probe", async () => {
+    const Runtime = {
+      evaluate: vi.fn().mockResolvedValue({ result: { value: "browser_challenge" } }),
+    };
+
+    await expect(__test__.detectHumanInterventionReason(Runtime as never)).resolves.toBe(
+      "browser_challenge",
+    );
+  });
+
+  test("ignores empty page probe results", async () => {
+    const Runtime = {
+      evaluate: vi.fn().mockResolvedValue({ result: { value: null } }),
+    };
+
+    await expect(__test__.detectHumanInterventionReason(Runtime as never)).resolves.toBeNull();
+  });
+
+  test("does not scan the full transcript text for challenge words", async () => {
+    const Runtime = {
+      evaluate: vi.fn().mockResolvedValue({ result: { value: null } }),
+    };
+
+    await __test__.detectHumanInterventionReason(Runtime as never);
+
+    expect(Runtime.evaluate.mock.calls[0]?.[0]?.expression).not.toContain(
+      "document.body?.innerText",
+    );
   });
 });

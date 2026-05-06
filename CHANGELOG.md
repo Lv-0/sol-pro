@@ -62,6 +62,12 @@
 
 ### Fixed
 
+- Browser: add a local managed Chrome post-submit CDP input guard so accidental
+  human input is ignored while ChatGPT Pro is generating, and strengthen
+  Stop-button defocus diagnostics after submit.
+- Browser: on Windows, park freshly launched authenticated managed Chrome runs
+  by minimizing the window after the composer is ready, while restoring retained
+  browsers for manual recovery or incomplete-answer debugging.
 - CLI: make `--harvest` status-aware so it does not print placeholder answers
   or mark non-answer-bearing sessions as harvested.
 - CLI: keep `--harvest` able to recover a real captured `ANSWER.md` when later
