@@ -1,0 +1,20 @@
+{
+  "name": "ask-pro",
+  "interface": {
+    "displayName": "ask-pro"
+  },
+  "plugins": [
+    {
+      "name": "ask-pro",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

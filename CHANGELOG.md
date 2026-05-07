@@ -34,6 +34,8 @@
 - Trim runtime dependencies to the ask-pro browser closure.
 - Document manual clone/link plus Codex marketplace installation instead of
   treating npm as the current install path.
+- Replace the long public README with a compact install/use guide centered on
+  Codex marketplace installation.
 - Recommend `--no-temporary` for repo advisories, review rounds, large bundles,
   and recoverability-sensitive runs.
 - Mark context redaction as best-effort in manifests and docs instead of
