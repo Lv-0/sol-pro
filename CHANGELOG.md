@@ -38,6 +38,8 @@
   Codex marketplace installation.
 - Change the repo marketplace entry to the Git-backed root-plugin source shape
   so `codex plugin marketplace add` exposes the plugin in Codex.
+- Make the cached plugin runner bootstrap Git marketplace installs by installing
+  dependencies and building `dist` when the cached source has not been built yet.
 - Recommend `--no-temporary` for repo advisories, review rounds, large bundles,
   and recoverability-sensitive runs.
 - Mark context redaction as best-effort in manifests and docs instead of

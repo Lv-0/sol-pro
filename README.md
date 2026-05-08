@@ -38,6 +38,11 @@ pnpm run plugin:refresh
 `pnpm run plugin:refresh` updates the local Codex plugin cache from the source
 checkout. Do not edit `~/.codex/plugins/cache/...` by hand.
 
+Git marketplace installs cache the source checkout. If `ask-pro` is not on
+`PATH`, agents should use the cached runner under
+`~/.codex/plugins/cache/<marketplace>/ask-pro/<version>/scripts/run-cached-cli.mjs`.
+The first runner call may install dependencies and build `dist` in that cache.
+
 ## Requirements
 
 - Node.js 24+
@@ -88,6 +93,8 @@ ask-pro --harvest <session-id>
 ## Agent Guidance
 
 - Prefer `--prompt-file` for multiline prompts.
+- If `ask-pro` is not on `PATH`, use the cached plugin runner instead of a
+  mutable source checkout.
 - Prefer `--no-temporary` for repo advisories, review rounds, large bundles, or
   anything where recovery matters.
 - Keep bundles focused: relevant source, focused tests, docs that define the

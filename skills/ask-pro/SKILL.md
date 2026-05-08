@@ -36,10 +36,13 @@ When invoked:
    `ask-pro --no-temporary --prompt-file <path> --files "<glob>"`; do not rely
    on shell multiline quoting.
    If `ask-pro` is not on `PATH`, run the cached plugin runner instead of the
-   mutable development checkout. Locate it under
-   `~/.codex/plugins/cache/<marketplace-name>/ask-pro/local/scripts/run-cached-cli.mjs`,
+   mutable development checkout. Locate it under the installed plugin cache,
+   usually
+   `~/.codex/plugins/cache/<marketplace-name>/ask-pro/<version>/scripts/run-cached-cli.mjs`,
    then call it with:
    `node <cached-runner> -- --cwd <target-repo-root> --no-temporary --prompt-file <path> --files "<repo-relative-glob>"`.
+   On Git marketplace installs, the first cached-runner call may bootstrap the
+   cache by installing dependencies and building `dist`; wait for that to finish.
 6. If auth is required, stop and ask the human to log in in the opened browser.
 7. Read the CLI's compact `ask_pro` record and run the emitted `resume` or
    `harvest` command when that is the next action.
