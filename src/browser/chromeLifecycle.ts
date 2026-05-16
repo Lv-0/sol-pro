@@ -367,6 +367,7 @@ interface TargetConnectMessages {
 }
 
 export interface RemoteTargetInfo {
+  id?: string;
   targetId?: string;
   type?: string;
   url?: string;
@@ -379,7 +380,10 @@ export async function listRemoteChromeTargets(options: {
 }): Promise<RemoteTargetInfo[]> {
   if (!options.browserWSEndpoint) {
     const targets = await CDP.List({ host: options.host, port: options.port });
-    return targets as unknown as RemoteTargetInfo[];
+    return (targets as Array<RemoteTargetInfo>).map((target) => ({
+      ...target,
+      targetId: target.targetId ?? target.id,
+    }));
   }
   const browser = await CDP({ target: options.browserWSEndpoint, local: true });
   try {

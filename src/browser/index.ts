@@ -20,6 +20,7 @@ import {
   closeTab,
   closeRemoteChromeTarget,
   closeChromeGracefully,
+  listRemoteChromeTargets,
   restoreChromeWindowByPid,
   shouldLaunchChromeMinimized,
 } from "./chromeLifecycle.js";
@@ -218,6 +219,62 @@ function shouldEnablePostSubmitInputGuard(config: {
   reusedChrome?: boolean;
 }): boolean {
   return !config.remoteChrome && !config.browserTabRef;
+}
+
+function shouldCloseManagedChromeOnCleanup(config: {
+  reusedChrome?: boolean;
+  keepBrowserOpen?: boolean;
+  connectionClosedUnexpectedly?: boolean;
+}): boolean {
+  return !config.reusedChrome && !config.keepBrowserOpen && !config.connectionClosedUnexpectedly;
+}
+
+function shouldCleanupManualLoginStateOnCleanup(config: {
+  reusedChrome?: boolean;
+  connectionClosedUnexpectedly?: boolean;
+}): boolean {
+  return !config.reusedChrome || Boolean(config.connectionClosedUnexpectedly);
+}
+
+function shouldCaptureLaunchTargetsForCleanup(config: {
+  manualLogin?: boolean;
+  reusedChrome?: boolean;
+}): boolean {
+  return !config.manualLogin && !config.reusedChrome;
+}
+
+function isDisposableLaunchPageUrl(url: string | undefined): boolean {
+  const normalized = (url ?? "").trim().toLowerCase();
+  return (
+    normalized === "about:blank" ||
+    /^[a-z][a-z0-9+.-]*:\/\/newtab\/$/.test(normalized) ||
+    normalized === "chrome://new-tab-page/"
+  );
+}
+
+function selectDisposableLaunchTargetIds(
+  targets: Array<{ id?: string; targetId?: string; type?: string; url?: string }>,
+  currentTargetId?: string | null,
+): string[] {
+  return targets
+    .filter((target) => {
+      const targetId = target.targetId ?? target.id;
+      if (!targetId || targetId === currentTargetId) return false;
+      if (target.type && target.type !== "page") return false;
+      return isDisposableLaunchPageUrl(target.url);
+    })
+    .map((target) => (target.targetId ?? target.id) as string);
+}
+
+function selectClosableLaunchTargetIds(
+  launchTargetIds: string[],
+  currentTargets: Array<{ id?: string; targetId?: string; type?: string; url?: string }>,
+  currentTargetId?: string | null,
+): string[] {
+  const launchTargetSet = new Set(launchTargetIds);
+  return selectDisposableLaunchTargetIds(currentTargets, currentTargetId).filter((targetId) =>
+    launchTargetSet.has(targetId),
+  );
 }
 
 async function detectHumanInterventionReason(
@@ -445,7 +502,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     removeTerminationHooks = registerTerminationHooks(
       chrome,
       userDataDir,
-      effectiveKeepBrowser,
+      effectiveKeepBrowser || Boolean(reusedChrome),
       logger,
       {
         isInFlight: () => runStatus !== "complete",
@@ -459,6 +516,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
 
   let client: ChromeClient | null = null;
   let isolatedTargetId: string | null = null;
+  let launchTargetIds: string[] = [];
   let ownsTarget = true;
   const startedAt = Date.now();
   let answerText = "";
@@ -494,6 +552,15 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         );
       } else {
         const strictTabIsolation = Boolean(manualLogin && reusedChrome);
+        if (
+          shouldCaptureLaunchTargetsForCleanup({ manualLogin, reusedChrome: Boolean(reusedChrome) })
+        ) {
+          const initialTargets = await listRemoteChromeTargets({
+            host: chromeHost,
+            port: chrome.port,
+          }).catch(() => []);
+          launchTargetIds = selectDisposableLaunchTargetIds(initialTargets, null);
+        }
         const connection = await connectWithNewTab(chrome.port, logger, "about:blank", chromeHost, {
           fallbackToDefault: !strictTabIsolation,
           retries: strictTabIsolation ? 3 : 0,
@@ -501,6 +568,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
         });
         client = connection.client;
         isolatedTargetId = connection.targetId ?? null;
+        if (!isolatedTargetId) {
+          launchTargetIds = [];
+        }
         ownsTarget = true;
       }
     } catch (error) {
@@ -978,6 +1048,26 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       await raceWithDisconnect(Page.reload({ ignoreCache: true }));
       await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
     };
+    let closedLaunchTabs = false;
+    const closeLaunchTabs = async () => {
+      if (closedLaunchTabs || launchTargetIds.length === 0) return;
+      closedLaunchTabs = true;
+      const currentTargets = await listRemoteChromeTargets({
+        host: chromeHost,
+        port: chrome.port,
+      }).catch(() => []);
+      const targetIds = selectClosableLaunchTargetIds(
+        launchTargetIds,
+        currentTargets,
+        isolatedTargetId,
+      );
+      launchTargetIds = [];
+      await Promise.all(
+        targetIds.map((targetId) =>
+          closeTab(chrome.port, targetId, logger, chromeHost).catch(() => undefined),
+        ),
+      );
+    };
 
     let baselineTurns: number | null = null;
     let baselineAssistantText: string | null = null;
@@ -998,6 +1088,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       });
       baselineTurns = submission.baselineTurns;
       baselineAssistantText = submission.baselineAssistantText;
+      await closeLaunchTabs();
     } finally {
       await releaseProfileLockIfHeld();
     }
@@ -1428,6 +1519,11 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       preserveBrowserAfterComplete ||
       preserveBrowserOnError ||
       (effectiveKeepBrowser && runStatus !== "complete");
+    const shouldCloseChrome = shouldCloseManagedChromeOnCleanup({
+      reusedChrome: Boolean(reusedChrome),
+      keepBrowserOpen,
+      connectionClosedUnexpectedly,
+    });
     try {
       const guardDisabled = await disablePostSubmitInputGuard();
       if (!guardDisabled && (keepBrowserOpen || connectionClosedUnexpectedly)) {
@@ -1461,22 +1557,30 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     removeDialogHandler?.();
     removeTerminationHooks?.();
     if (!keepBrowserOpen) {
-      if (!connectionClosedUnexpectedly) {
+      if (shouldCloseChrome) {
         try {
           await closeChromeGracefully(chrome, logger);
         } catch {
           // ignore close failures
         }
+      } else if (!connectionClosedUnexpectedly && reusedChrome) {
+        releaseChromeProcessHandle(chrome);
+        logger(`Reused Chrome left running on port ${chrome.port} with profile ${userDataDir}`);
       }
       if (manualLogin) {
-        const shouldCleanup = await shouldCleanupManualLoginProfileState(
-          userDataDir,
-          logger.verbose ? logger : undefined,
-          {
+        const shouldCleanup =
+          shouldCleanupManualLoginStateOnCleanup({
+            reusedChrome: Boolean(reusedChrome),
             connectionClosedUnexpectedly,
-            host: chromeHost,
-          },
-        );
+          }) &&
+          (await shouldCleanupManualLoginProfileState(
+            userDataDir,
+            logger.verbose ? logger : undefined,
+            {
+              connectionClosedUnexpectedly,
+              host: chromeHost,
+            },
+          ));
         if (shouldCleanup) {
           // Preserve the persistent manual-login profile, but clear stale reattach hints.
           await cleanupStaleProfileState(userDataDir, logger, { lockRemovalMode: "never" }).catch(
@@ -2459,6 +2563,12 @@ export const __test__ = {
   listIgnoredRemoteChromeFlags,
   shouldParkAuthenticatedChromeWindow,
   shouldEnablePostSubmitInputGuard,
+  shouldCloseManagedChromeOnCleanup,
+  shouldCleanupManualLoginStateOnCleanup,
+  shouldCaptureLaunchTargetsForCleanup,
+  isDisposableLaunchPageUrl,
+  selectDisposableLaunchTargetIds,
+  selectClosableLaunchTargetIds,
   detectHumanInterventionReason,
   waitForLogin,
 };

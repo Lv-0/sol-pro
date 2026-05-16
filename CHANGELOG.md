@@ -70,6 +70,9 @@
 
 ### Fixed
 
+- Browser: leave reused manual-login Chrome running when a parallel ask-pro tab
+  completes, closing only the completed run's isolated tab, and clean up the
+  owned temporary-profile launch blank/new-tab page after submit.
 - Browser: add a local managed Chrome post-submit CDP input guard so accidental
   human input is ignored while ChatGPT Pro is generating, and strengthen
   Stop-button defocus diagnostics after submit.

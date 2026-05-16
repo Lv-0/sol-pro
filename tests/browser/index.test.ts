@@ -172,6 +172,136 @@ describe("post-submit input guard scope", () => {
   });
 });
 
+describe("managed Chrome cleanup ownership", () => {
+  test("closes Chrome only when this run launched it", () => {
+    expect(
+      __test__.shouldCloseManagedChromeOnCleanup({
+        reusedChrome: false,
+        keepBrowserOpen: false,
+        connectionClosedUnexpectedly: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("leaves reused shared Chrome running after closing the run tab", () => {
+    expect(
+      __test__.shouldCloseManagedChromeOnCleanup({
+        reusedChrome: true,
+        keepBrowserOpen: false,
+        connectionClosedUnexpectedly: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("does not close Chrome when retained or already disconnected", () => {
+    expect(
+      __test__.shouldCloseManagedChromeOnCleanup({
+        keepBrowserOpen: true,
+        connectionClosedUnexpectedly: false,
+      }),
+    ).toBe(false);
+    expect(
+      __test__.shouldCloseManagedChromeOnCleanup({
+        keepBrowserOpen: false,
+        connectionClosedUnexpectedly: true,
+      }),
+    ).toBe(false);
+  });
+
+  test("preserves live reused manual-login profile state", () => {
+    expect(
+      __test__.shouldCleanupManualLoginStateOnCleanup({
+        reusedChrome: true,
+        connectionClosedUnexpectedly: false,
+      }),
+    ).toBe(false);
+    expect(
+      __test__.shouldCleanupManualLoginStateOnCleanup({
+        reusedChrome: true,
+        connectionClosedUnexpectedly: true,
+      }),
+    ).toBe(true);
+    expect(
+      __test__.shouldCleanupManualLoginStateOnCleanup({
+        reusedChrome: false,
+        connectionClosedUnexpectedly: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("captures launch cleanup targets only for temporary owned profiles", () => {
+    expect(
+      __test__.shouldCaptureLaunchTargetsForCleanup({
+        manualLogin: false,
+        reusedChrome: false,
+      }),
+    ).toBe(true);
+    expect(
+      __test__.shouldCaptureLaunchTargetsForCleanup({
+        manualLogin: true,
+        reusedChrome: false,
+      }),
+    ).toBe(false);
+    expect(
+      __test__.shouldCaptureLaunchTargetsForCleanup({
+        manualLogin: false,
+        reusedChrome: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("launch tab cleanup", () => {
+  test("selects only disposable launch page targets that are not the active run tab", () => {
+    expect(
+      __test__.selectDisposableLaunchTargetIds(
+        [
+          { id: "launch-blank", type: "page", url: "about:blank" },
+          { id: "launch-newtab", type: "page", url: "chrome://newtab/" },
+          { id: "launch-edge-newtab", type: "page", url: "edge://newtab/" },
+          { id: "launch-brave-newtab", type: "page", url: "brave://newtab/" },
+          { id: "launch-new-tab-page", type: "page", url: "chrome://new-tab-page/" },
+          { targetId: "current", type: "page", url: "about:blank" },
+          { targetId: "chat", type: "page", url: "https://chatgpt.com/c/abc" },
+          { targetId: "worker", type: "service_worker", url: "about:blank" },
+        ],
+        "current",
+      ),
+    ).toEqual([
+      "launch-blank",
+      "launch-newtab",
+      "launch-edge-newtab",
+      "launch-brave-newtab",
+      "launch-new-tab-page",
+    ]);
+  });
+
+  test("ignores non-disposable and missing target ids", () => {
+    expect(
+      __test__.selectDisposableLaunchTargetIds([
+        { type: "page", url: "about:blank" },
+        { targetId: "settings", type: "page", url: "chrome://settings/" },
+        { targetId: "chat", type: "page", url: "https://chatgpt.com/" },
+      ]),
+    ).toEqual([]);
+  });
+
+  test("closes only launch-owned targets that are still disposable", () => {
+    expect(
+      __test__.selectClosableLaunchTargetIds(
+        ["launch-blank", "restored", "other-blank"],
+        [
+          { id: "launch-blank", type: "page", url: "about:blank" },
+          { id: "restored", type: "page", url: "https://example.test/restored" },
+          { id: "other-blank", type: "page", url: "about:blank" },
+          { id: "new-blank", type: "page", url: "about:blank" },
+        ],
+        "other-blank",
+      ),
+    ).toEqual(["launch-blank"]);
+  });
+});
+
 describe("human intervention detection", () => {
   test("detects login/challenge reasons from the page probe", async () => {
     const Runtime = {
