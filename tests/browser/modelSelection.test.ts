@@ -218,6 +218,66 @@ describe("browser model selection matchers", () => {
     expect(result).toEqual({ status: "switched", label: "Pro" });
   });
 
+  it("accepts Pro Extended when the picker closes but the pill stays effort-only", async () => {
+    const modelButton = new FakeElement("Heavy", {
+      "aria-haspopup": "menu",
+      class: "__composer-pill __composer-pill--neutral",
+    });
+    const document = new FakeDocument([modelButton]);
+    const option = new FakeElement("Pro • Extended", {}, [], () => {
+      document.menus.length = 0;
+    });
+    document.menus.push(
+      new FakeElement(
+        "Latest • 5.5 Instant Thinking • Heavy Pro • Extended Configure...",
+        {
+          role: "menu",
+        },
+        [
+          new FakeElement("Latest • 5.5"),
+          new FakeElement("Instant"),
+          new FakeElement("Thinking • Heavy"),
+          option,
+          new FakeElement("Configure..."),
+        ],
+      ),
+    );
+
+    const result = await runModelSelectionExpression("Pro", document);
+
+    expect(result).toEqual({ status: "switched", label: "Heavy" });
+  });
+
+  it("does not accept Pro Extended when the picker stays open without selected evidence", async () => {
+    const modelButton = new FakeElement("Heavy", {
+      "aria-haspopup": "menu",
+      class: "__composer-pill __composer-pill--neutral",
+    });
+    const option = new FakeElement("Pro • Extended");
+    const menu = new FakeElement(
+      "Latest • 5.5 Instant Thinking • Heavy Pro • Extended",
+      {
+        role: "menu",
+      },
+      [
+        new FakeElement("Latest • 5.5"),
+        new FakeElement("Instant"),
+        new FakeElement("Thinking • Heavy"),
+        option,
+      ],
+    );
+
+    const result = await runModelSelectionExpression(
+      "Pro",
+      new FakeDocument([modelButton], [menu]),
+      {
+        fastTimeout: true,
+      },
+    );
+
+    expect(result).toMatchObject({ status: "option-not-found" });
+  });
+
   it("does not select Projects for the current visible Pro target", async () => {
     const modelButton = new FakeElement("Instant", {
       "aria-haspopup": "menu",

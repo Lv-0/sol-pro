@@ -414,7 +414,7 @@ function buildModelSelectionExpression(
         return labels.slice(0, 12);
       };
       const ensureMenuOpen = () => {
-        const menuOpen = document.querySelector('[role="menu"], [data-radix-collection-root]');
+        const menuOpen = document.querySelector(${menuContainerLiteral});
         if (!menuOpen && performance.now() - lastPointerClick > REOPEN_INTERVAL_MS) {
           pointerClick();
         }
@@ -447,9 +447,14 @@ function buildModelSelectionExpression(
           }
           // Newer ChatGPT builds may keep the composer pill as just "Standard",
           // "Extended", or "Pro" after selecting a terminal Pro row. Require
-          // selected-state evidence when the composer remains effort-only.
+          // selected-state evidence, or a closed picker, when the composer
+          // remains effort-only.
           setTimeout(() => {
-            if (buttonMatchesTarget() || optionIsSelected(match.node)) {
+            if (
+              buttonMatchesTarget() ||
+              optionIsSelected(match.node) ||
+              !document.querySelector(${menuContainerLiteral})
+            ) {
               closeMenu();
               resolve({ status: 'switched', label: getButtonLabel() || match.label });
               return;
