@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import fg from "fast-glob";
@@ -92,6 +93,7 @@ const DEFAULT_EXCLUDES = [
   "vendor/**",
   ".git/**",
 ];
+const SESSION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,127}$/;
 
 export async function createAskProSession({
   cwd,
@@ -111,10 +113,7 @@ export async function createAskProSession({
     throw new Error("ask-pro requires a question.");
   }
 
-  const sessionId = buildSessionId(trimmedQuestion);
-  const sessionRoot = path.join(cwd, ".ask-pro", "sessions");
-  const sessionDir = path.join(sessionRoot, sessionId);
-  await fs.mkdir(sessionDir, { recursive: true });
+  const { sessionId, sessionDir } = await createSessionDirectory(cwd, trimmedQuestion);
 
   const collected = await collectContextFiles({ cwd, filePatterns });
   const redactionFindings: string[] = [];
@@ -202,7 +201,7 @@ export async function createAskProSession({
 }
 
 export function getAskProSessionPaths(cwd: string, sessionId: string): AskProSessionPaths {
-  const dir = path.join(cwd, ".ask-pro", "sessions", sessionId);
+  const dir = resolveAskProSessionDir(cwd, sessionId);
   return {
     dir,
     prompt: path.join(dir, "PROMPT.md"),
@@ -317,9 +316,9 @@ export async function readAskProStatus({
   sessionId?: string;
 }): Promise<{ dir: string; status: AskProStatusFile }> {
   const id = sessionId ?? (await findLatestSessionId(cwd));
-  const dir = path.join(cwd, ".ask-pro", "sessions", id);
-  const raw = await fs.readFile(path.join(dir, "status.json"), "utf8");
-  return { dir, status: JSON.parse(raw) as AskProStatusFile };
+  const paths = getAskProSessionPaths(cwd, id);
+  const raw = await fs.readFile(paths.status, "utf8");
+  return { dir: paths.dir, status: JSON.parse(raw) as AskProStatusFile };
 }
 
 export async function readAskProAnswer({
@@ -346,17 +345,96 @@ export async function readAskProPrompt({
 }
 
 async function findLatestSessionId(cwd: string): Promise<string> {
-  const root = path.join(cwd, ".ask-pro", "sessions");
+  const root = getAskProSessionsRoot(cwd);
   const entries = await fs.readdir(root, { withFileTypes: true });
-  const dirs = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-  const latest = dirs.at(-1);
+  const sessions = (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() && isValidAskProSessionId(entry.name))
+        .map((entry) => readSessionCreatedAt(cwd, entry.name)),
+    )
+  ).filter((session) => session !== undefined);
+  const latest = sessions.sort(
+    (left, right) =>
+      left.createdAtMs - right.createdAtMs ||
+      left.tiebreakerMs - right.tiebreakerMs ||
+      left.sessionId.localeCompare(right.sessionId),
+  )[sessions.length - 1]?.sessionId;
   if (!latest) {
     throw new Error("No ask-pro sessions found.");
   }
   return latest;
+}
+
+async function readSessionCreatedAt(
+  cwd: string,
+  sessionId: string,
+): Promise<{ sessionId: string; createdAtMs: number; tiebreakerMs: number } | undefined> {
+  const statusPath = path.join(resolveAskProSessionDir(cwd, sessionId), "status.json");
+  try {
+    const [raw, stat] = await Promise.all([fs.readFile(statusPath, "utf8"), fs.stat(statusPath)]);
+    const status = JSON.parse(raw) as Partial<AskProStatusFile>;
+    const createdAt = typeof status.createdAt === "string" ? Date.parse(status.createdAt) : NaN;
+    const createdAtMs = Number.isFinite(createdAt) ? createdAt : 0;
+    return {
+      sessionId,
+      createdAtMs,
+      tiebreakerMs: stat.birthtimeMs || stat.ctimeMs || stat.mtimeMs,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function createSessionDirectory(
+  cwd: string,
+  question: string,
+): Promise<{ sessionId: string; sessionDir: string }> {
+  const root = getAskProSessionsRoot(cwd);
+  await fs.mkdir(root, { recursive: true });
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const sessionId = buildSessionId(question);
+    const sessionDir = resolveAskProSessionDir(cwd, sessionId);
+    try {
+      await fs.mkdir(sessionDir);
+      return { sessionId, sessionDir };
+    } catch (error) {
+      if (isNodeError(error) && error.code === "EEXIST") {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("Could not allocate a unique ask-pro session id.");
+}
+
+function getAskProSessionsRoot(cwd: string): string {
+  return path.resolve(cwd, ".ask-pro", "sessions");
+}
+
+function resolveAskProSessionDir(cwd: string, sessionId: string): string {
+  validateAskProSessionId(sessionId);
+  const root = getAskProSessionsRoot(cwd);
+  const dir = path.resolve(root, sessionId);
+  const relative = path.relative(root, dir);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Invalid ask-pro session id: ${sessionId}`);
+  }
+  return dir;
+}
+
+function validateAskProSessionId(sessionId: string): void {
+  if (!isValidAskProSessionId(sessionId)) {
+    throw new Error(`Invalid ask-pro session id: ${sessionId}`);
+  }
+}
+
+function isValidAskProSessionId(sessionId: string): boolean {
+  return SESSION_ID_PATTERN.test(sessionId);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 async function collectContextFiles({
@@ -471,7 +549,7 @@ async function expandDirectoryPattern(absolutePath: string, pattern: string): Pr
 function buildSessionId(question: string, now = new Date()): string {
   const [date, time = ""] = now.toISOString().split("T");
   const compactTime = time.replace(/:/g, "").replace(/\.\d{3}Z$/, "");
-  return `${date}T${compactTime}-${slugify(question)}`;
+  return `${date}T${compactTime}-${slugify(question)}-${randomBytes(4).toString("hex")}`;
 }
 
 function slugify(question: string): string {

@@ -1,9 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   createAskProSession,
+  getAskProSessionPaths,
   readAskProAnswer,
   readAskProStatus,
   updateAskProStatus,
@@ -12,6 +13,7 @@ import {
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
@@ -90,6 +92,85 @@ describe("ask-pro sessions", () => {
     expect(prompt).toContain("ask-pro-response.zip");
     expect(prompt).toContain("IMPLEMENTATION_PLAN.md");
     expect(session.status.artifacts).toBe(true);
+  });
+
+  test("creates distinct sessions for the same question in the same second", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-01T14:20:00.123Z"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+
+    const first = await createAskProSession({
+      cwd,
+      question: "Review this billing queue plan.",
+      filePatterns: [],
+      dryRun: true,
+    });
+    const second = await createAskProSession({
+      cwd,
+      question: "Review this billing queue plan.",
+      filePatterns: [],
+      dryRun: true,
+    });
+
+    expect(first.id).toMatch(/^2026-05-01T142000-review-this-billing-queue-plan-[a-f0-9]{8}$/);
+    expect(second.id).toMatch(/^2026-05-01T142000-review-this-billing-queue-plan-[a-f0-9]{8}$/);
+    expect(second.id).not.toBe(first.id);
+    expect((await fs.stat(first.dir)).isDirectory()).toBe(true);
+    expect((await fs.stat(second.dir)).isDirectory()).toBe(true);
+  });
+
+  test("reads the latest session by creation metadata instead of directory name", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-01T14:20:00.123Z"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+
+    const first = await createAskProSession({
+      cwd,
+      question: "Zzz older question.",
+      filePatterns: [],
+      dryRun: true,
+    });
+    const second = await createAskProSession({
+      cwd,
+      question: "Aaa newer question.",
+      filePatterns: [],
+      dryRun: true,
+    });
+    expect(first.id.localeCompare(second.id)).toBeGreaterThan(0);
+
+    for (const [session, createdAt] of [
+      [first, "2026-05-01T14:20:00.000Z"],
+      [second, "2026-05-01T14:20:00.001Z"],
+    ] as const) {
+      const statusPath = path.join(session.dir, "status.json");
+      const status = JSON.parse(await fs.readFile(statusPath, "utf8")) as Record<string, unknown>;
+      await fs.writeFile(
+        statusPath,
+        `${JSON.stringify({ ...status, createdAt, updatedAt: createdAt }, null, 2)}\n`,
+        "utf8",
+      );
+    }
+
+    await expect(readAskProStatus({ cwd })).resolves.toMatchObject({
+      status: { sessionId: second.id },
+    });
+  });
+
+  test("rejects path-like session ids before resolving session files", async () => {
+    const cwd = path.join(os.tmpdir(), "ask-pro-missing-session-root");
+    const invalidIds = ["", ".", "..", "../escape", "nested/id", "nested\\id", "bad.id"];
+
+    for (const sessionId of invalidIds) {
+      expect(() => getAskProSessionPaths(cwd, sessionId)).toThrow(/Invalid ask-pro session id/);
+      await expect(readAskProStatus({ cwd, sessionId })).rejects.toThrow(
+        /Invalid ask-pro session id/,
+      );
+      await expect(updateAskProStatus({ cwd, sessionId, status: "COMPLETED" })).rejects.toThrow(
+        /Invalid ask-pro session id/,
+      );
+    }
   });
 
   test("normalizes Windows-style file and directory patterns", async () => {

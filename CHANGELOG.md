@@ -75,6 +75,9 @@
   and recoverability-sensitive runs.
 - Mark context redaction as best-effort in manifests and docs instead of
   overstating strict secret safety.
+- Add short entropy to new session IDs, choose latest sessions from creation
+  metadata, and resolve public session IDs through a bounded
+  `.ask-pro/sessions/<id>` helper that rejects path-like values.
 
 ### Added
 

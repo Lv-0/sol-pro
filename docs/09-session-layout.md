@@ -40,21 +40,25 @@ CODEX_PLAN.md
 Prefer:
 
 ```text
-YYYY-MM-DDTHHMMSS-short-slug
+YYYY-MM-DDTHHMMSS-short-slug-8hex
 ```
 
 Example:
 
 ```text
-2026-05-01T142000-billing-webhook
+2026-05-01T142000-billing-webhook-1a2b3c4d
 ```
+
+Session IDs are plain directory names made from ASCII letters, numbers, and
+hyphens. Session helpers reject path-like IDs before reading or writing files,
+and resolve accepted IDs only below `.ask-pro/sessions/<session-id>/`.
 
 ## `MANIFEST.json`
 
 ```json
 {
   "schemaVersion": 1,
-  "sessionId": "2026-05-01T142000-billing-webhook",
+  "sessionId": "2026-05-01T142000-billing-webhook-1a2b3c4d",
   "question": "Should this billing webhook use a queue or transactional outbox?",
   "includedFiles": [
     {
@@ -80,12 +84,12 @@ Example:
 ```json
 {
   "schemaVersion": 1,
-  "sessionId": "2026-05-01T142000-billing-webhook",
+  "sessionId": "2026-05-01T142000-billing-webhook-1a2b3c4d",
   "status": "WAITING",
   "createdAt": "2026-05-01T14:20:00+02:00",
   "updatedAt": "2026-05-01T14:35:00+02:00",
-  "resumeCommand": "ask-pro --resume 2026-05-01T142000-billing-webhook",
-  "harvestCommand": "ask-pro --harvest 2026-05-01T142000-billing-webhook"
+  "resumeCommand": "ask-pro --resume 2026-05-01T142000-billing-webhook-1a2b3c4d",
+  "harvestCommand": "ask-pro --harvest 2026-05-01T142000-billing-webhook-1a2b3c4d"
 }
 ```
 
