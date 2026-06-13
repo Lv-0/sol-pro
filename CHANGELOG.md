@@ -99,6 +99,9 @@
 
 ### Fixed
 
+- CLI: reject `--files` glob roots that resolve outside the project cwd before
+  matching files, including parent-relative Windows backslash variants and
+  post-wildcard parent traversal.
 - Browser: leave reused manual-login Chrome running when a parallel ask-pro tab
   completes, closing only the completed run's isolated tab, and clean up the
   owned temporary-profile launch blank/new-tab page after submit.

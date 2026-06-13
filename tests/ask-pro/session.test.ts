@@ -15,6 +15,17 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
+async function createRepoWithOutsideSibling(): Promise<string> {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-parent-"));
+  const cwd = path.join(parent, "repo");
+  const sibling = path.join(parent, "sibling");
+  await fs.mkdir(path.join(cwd, "src", "a"), { recursive: true });
+  await fs.mkdir(sibling);
+  tempDirs.push(parent);
+  await fs.writeFile(path.join(sibling, "outside.ts"), "export const outside = true;\n");
+  return cwd;
+}
+
 describe("ask-pro sessions", () => {
   test("creates a dry-run session with manifests and a context zip", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
@@ -166,6 +177,93 @@ describe("ask-pro sessions", () => {
         dryRun: true,
       }),
     ).rejects.toThrow(/inside the project cwd/);
+  });
+
+  test.each([
+    "../sibling/**/*.ts",
+    "..\\sibling\\**\\*.ts",
+    "../missing/**/*.ts",
+    "src/*/../../../sibling/**/*.ts",
+    "{src,../sibling}/**/*.ts",
+    "src/*/{..,a}/../../sibling/**/*.ts",
+    "src/*/@(..)/../../sibling/**/*.ts",
+    "src/@(..|a)/../sibling/**/*.ts",
+    "src/@(?(a))/../../sibling/**/*.ts",
+    "src/{,a}/../../sibling/**/*.ts",
+    "src/{a/../../../sibling,a}/**/*.ts",
+    "src/?(a)/../../sibling/**/*.ts",
+    "src/@(a|)/../../sibling/**/*.ts",
+    "src/!(a)/../../sibling/**/*.ts",
+    "src/@(a|@(b|))/../../sibling/**/*.ts",
+    "src/?(a)../../sibling/**/*.ts",
+    "src/@(?(a))../../sibling/**/*.ts",
+    "src/@(a|@(b|))../../sibling/**/*.ts",
+    "src/@(@(a|).)./../sibling/**/*.ts",
+    "src/@(a|@(b|c)|)../../sibling/**/*.ts",
+    "src/@(?()../..)/sibling/**/*.ts",
+    "src/@(@(a|)/../../sibling|a)/**/*.ts",
+    "src/+(a/../../sibling|b)/**/*.ts",
+    "{src,C:/outside}/**/*.ts",
+  ])("rejects outside project glob pattern %s", async (pattern) => {
+    const cwd = await createRepoWithOutsideSibling();
+
+    await expect(
+      createAskProSession({
+        cwd,
+        question: "Review this.",
+        filePatterns: [pattern],
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/inside the project cwd/);
+  });
+
+  test("does not reject glob patterns with parent segments that stay inside the project cwd", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+    await fs.mkdir(path.join(cwd, "src", "a"), { recursive: true });
+    await fs.writeFile(path.join(cwd, "src", "root.ts"), "export const root = true;\n");
+
+    await expect(
+      createAskProSession({
+        cwd,
+        question: "Review this.",
+        filePatterns: ["src/*/../*.ts"],
+        dryRun: true,
+      }),
+    ).resolves.toMatchObject({ status: { status: "DRY_RUN_COMPLETE" } });
+  });
+
+  test.each(["src/{..,a}/**/*.ts"])(
+    "does not reject in-project parent alternative glob %s",
+    async (pattern) => {
+      const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+      tempDirs.push(cwd);
+      await fs.mkdir(path.join(cwd, "src", "a"), { recursive: true });
+
+      await expect(
+        createAskProSession({
+          cwd,
+          question: "Review this.",
+          filePatterns: [pattern],
+          dryRun: true,
+        }),
+      ).resolves.toMatchObject({ status: { status: "DRY_RUN_COMPLETE" } });
+    },
+  );
+
+  test("does not reject in-project brace ranges with dot-dot text", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-session-"));
+    tempDirs.push(cwd);
+    await fs.mkdir(path.join(cwd, "src"), { recursive: true });
+
+    await expect(
+      createAskProSession({
+        cwd,
+        question: "Review this.",
+        filePatterns: ["src/{a..z}/**/*.ts"],
+        dryRun: true,
+      }),
+    ).resolves.toMatchObject({ status: { status: "DRY_RUN_COMPLETE" } });
   });
 
   test("allows parent segments that resolve inside the project cwd", async () => {
