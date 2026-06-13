@@ -19,7 +19,8 @@ Confirm these before code deletion:
 - V1 removes image generation/editing/download.
 - V1 removes TUI.
 - V1 removes Project Sources and Deep Research.
-- V1 keeps sessions, reattach, harvest, browser profile, attachment upload, copy/render fallback.
+- V1 keeps sessions, reattach, browser profile, attachment upload, `--copy`
+  for answer-bearing copy targets, and `--harvest` for raw answers.
 
 ## Auth responsibilities
 

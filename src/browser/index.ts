@@ -713,7 +713,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       }
       if (!config.inlineCookies) {
         logger(
-          "Heads-up: macOS may prompt for your Keychain password to read Chrome cookies; use --copy or --render for manual flow.",
+          "Heads-up: macOS may prompt for your Keychain password to read Chrome cookies; for answer-bearing sessions, use --copy to print a copy target or --harvest to print the raw answer.",
         );
       } else {
         logger("Applying inline cookies (skipping Chrome profile read and Keychain prompt)");

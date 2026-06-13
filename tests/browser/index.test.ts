@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
 import {
   __test__,
@@ -124,6 +125,22 @@ describe("remote Chrome option warnings", () => {
         chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       }),
     ).toContain("--browser-chrome-path");
+  });
+});
+
+describe("recovery command hints", () => {
+  test("advertises only current answer recovery commands", () => {
+    const runtimeSource = readFileSync("src/browser/index.ts", "utf8");
+    const recoveryHintSources = [
+      runtimeSource,
+      readFileSync("docs/00-human-checklist.md", "utf8"),
+      readFileSync("README.md", "utf8"),
+    ].join("\n");
+
+    expect(runtimeSource).toContain("--copy to print a copy target");
+    expect(runtimeSource).toContain("--harvest to print the raw answer");
+    expect(recoveryHintSources).not.toContain("--render");
+    expect(recoveryHintSources).not.toContain("copy/render");
   });
 });
 

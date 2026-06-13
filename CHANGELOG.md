@@ -75,6 +75,8 @@
   and recoverability-sensitive runs.
 - Mark context redaction as best-effort in manifests and docs instead of
   overstating strict secret safety.
+- Clarify manual recovery copy so user-facing hints name only `--copy` for
+  answer-bearing copy targets and `--harvest` for raw answers.
 
 ### Added
 
