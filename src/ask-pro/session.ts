@@ -478,29 +478,262 @@ async function normalizeFilePatterns(cwd: string, filePatterns: string[]): Promi
 
 async function normalizeFilePattern(cwd: string, pattern: string): Promise<string> {
   const normalized = pattern.replace(/\\/g, "/");
-  const asPath = path.resolve(cwd, pattern);
+  const asPath = path.resolve(cwd, normalized);
   const realCwd = await realpathIfExists(cwd);
+  await assertFilePatternPrefixInsideCwd(cwd, realCwd, pattern);
   if (path.isAbsolute(pattern)) {
     const realTarget = await realpathIfExists(asPath);
     const realRelative = path.relative(realCwd, realTarget);
-    if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    if (isOutsidePath(realRelative)) {
       throw new Error(`--files path must be inside the project cwd: ${pattern}`);
     }
     const relative = path.relative(cwd, asPath);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    if (isOutsidePath(relative)) {
       throw new Error(`--files path must be inside the project cwd: ${pattern}`);
     }
     return expandDirectoryPattern(asPath, normalizeManifestPath(relative) || ".");
   }
   const realTarget = await realpathIfExists(asPath);
   const realRelative = path.relative(realCwd, realTarget);
-  if (
-    (await pathExists(asPath)) &&
-    (realRelative.startsWith("..") || path.isAbsolute(realRelative))
-  ) {
+  if ((await pathExists(asPath)) && isOutsidePath(realRelative)) {
     throw new Error(`--files path must be inside the project cwd: ${pattern}`);
   }
   return expandDirectoryPattern(asPath, normalized);
+}
+
+async function assertFilePatternPrefixInsideCwd(
+  cwd: string,
+  realCwd: string,
+  pattern: string,
+): Promise<void> {
+  await Promise.all(
+    expandBraceAlternatives(pattern).map((expandedPattern) =>
+      assertExpandedFilePatternInsideCwd(cwd, realCwd, expandedPattern, pattern),
+    ),
+  );
+}
+
+async function assertExpandedFilePatternInsideCwd(
+  cwd: string,
+  realCwd: string,
+  expandedPattern: string,
+  originalPattern: string,
+): Promise<void> {
+  assertNoRootedGlobAlternative(expandedPattern, originalPattern);
+  assertNoUnsafeExtglobBody(expandedPattern, originalPattern);
+  const { prefix, globTail } = splitPatternAtFirstGlob(expandedPattern);
+  const absolutePrefix = path.resolve(cwd, prefix || ".");
+  const lexicalRelative = path.relative(path.resolve(cwd), absolutePrefix);
+  if (isOutsidePath(lexicalRelative)) {
+    throw new Error(`--files path must be inside the project cwd: ${originalPattern}`);
+  }
+  assertGlobTailInsideCwd(lexicalRelative, globTail, originalPattern);
+
+  if (!(await pathExists(absolutePrefix))) {
+    return;
+  }
+
+  const realPrefix = await fs.realpath(absolutePrefix);
+  const realRelative = path.relative(realCwd, realPrefix);
+  if (isOutsidePath(realRelative)) {
+    throw new Error(`--files path must be inside the project cwd: ${originalPattern}`);
+  }
+}
+
+function expandBraceAlternatives(pattern: string): string[] {
+  const results: string[] = [];
+  const visit = (source: string): void => {
+    const brace = findExpandableBrace(source);
+    if (!brace) {
+      results.push(source);
+      return;
+    }
+    for (const alternative of brace.alternatives) {
+      if (results.length >= 64) {
+        throw new Error(`--files pattern has too many brace alternatives: ${pattern}`);
+      }
+      visit(`${source.slice(0, brace.start)}${alternative}${source.slice(brace.end + 1)}`);
+    }
+  };
+  visit(pattern.replace(/\\/g, "/"));
+  return results;
+}
+
+function findExpandableBrace(
+  pattern: string,
+): { start: number; end: number; alternatives: string[] } | undefined {
+  for (let start = 0; start < pattern.length; start += 1) {
+    if (pattern[start] !== "{") {
+      continue;
+    }
+    let depth = 0;
+    for (let end = start; end < pattern.length; end += 1) {
+      if (pattern[end] === "{") {
+        depth += 1;
+      } else if (pattern[end] === "}") {
+        depth -= 1;
+      }
+      if (depth === 0) {
+        const alternatives = splitBraceAlternatives(pattern.slice(start + 1, end));
+        if (alternatives.length > 1) {
+          return { start, end, alternatives };
+        }
+        start = end;
+        break;
+      }
+    }
+  }
+  return undefined;
+}
+
+function splitBraceAlternatives(body: string): string[] {
+  const alternatives: string[] = [];
+  let depth = 0;
+  let segmentStart = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] === "{") {
+      depth += 1;
+    } else if (body[index] === "}") {
+      depth -= 1;
+    } else if (body[index] === "," && depth === 0) {
+      alternatives.push(body.slice(segmentStart, index));
+      segmentStart = index + 1;
+    }
+  }
+  alternatives.push(body.slice(segmentStart));
+  return alternatives.length === 1 ? [] : alternatives;
+}
+
+function splitPatternAtFirstGlob(pattern: string): { prefix: string; globTail: string[] } {
+  const normalized = pattern.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  const firstGlobSegment = segments.findIndex(hasGlobSyntax);
+  return firstGlobSegment === -1
+    ? { prefix: normalized, globTail: [] }
+    : {
+        prefix: segments.slice(0, firstGlobSegment).join("/"),
+        globTail: segments.slice(firstGlobSegment),
+      };
+}
+
+function assertGlobTailInsideCwd(
+  lexicalRelativePrefix: string,
+  globTail: string[],
+  pattern: string,
+): void {
+  let depth =
+    lexicalRelativePrefix === ""
+      ? 0
+      : lexicalRelativePrefix.replace(/\\/g, "/").split("/").filter(Boolean).length;
+  for (const segment of globTail) {
+    if (segment === "" || segment === ".") {
+      continue;
+    }
+    if (globSegmentCanExpandToParent(segment)) {
+      depth -= 1;
+    } else if (hasGlobSyntax(segment)) {
+      depth += globSegmentMinimumDepth(segment);
+    } else if (segment === "..") {
+      depth -= 1;
+    } else {
+      depth += 1;
+    }
+    if (depth < 0) {
+      throw new Error(`--files path must be inside the project cwd: ${pattern}`);
+    }
+  }
+}
+
+function hasGlobSyntax(segment: string): boolean {
+  return /[*?[\]{}]|[!+@]\(/.test(segment);
+}
+
+function globSegmentCanExpandToParent(segment: string): boolean {
+  return (
+    hasGlobSyntax(segment) &&
+    (/(^|[,{(|])\.\.($|[,}|)])/.test(segment) ||
+      (hasNestedExtglob(segment) && segment.includes(".")) ||
+      (segment.includes("..") && segmentContainsEmptyCapableExtglob(segment)) ||
+      segment.replaceAll(emptyCapableExtglobPattern, "") === "..")
+  );
+}
+
+function globSegmentMinimumDepth(segment: string): number {
+  if (segment === "**" || extglobSegmentCanBeEmpty(segment)) {
+    return 0;
+  }
+  return 1;
+}
+
+function extglobSegmentCanBeEmpty(segment: string): boolean {
+  const body = segment.match(/^([!*+@?])\((.*)\)$/)?.[2];
+  return (
+    body !== undefined &&
+    (hasNestedExtglob(segment) ||
+      segment.startsWith("!(") ||
+      segment.startsWith("?(") ||
+      segment.startsWith("*(") ||
+      body.includes("!(") ||
+      body.includes("?(") ||
+      body.includes("*(") ||
+      body.includes("(|") ||
+      body.includes("|)") ||
+      body.split("|").includes(""))
+  );
+}
+
+const emptyCapableExtglobPattern = /[!?*]\([^)]*\)|[+@]\([^)]*(?:\|\)|\(\||\|\|)[^)]*\)/g;
+
+function hasNestedExtglob(segment: string): boolean {
+  return /[!+@?*]\([^)]*[!+@?*]\(/.test(segment);
+}
+
+function segmentContainsEmptyCapableExtglob(segment: string): boolean {
+  emptyCapableExtglobPattern.lastIndex = 0;
+  return emptyCapableExtglobPattern.test(segment);
+}
+
+function assertNoRootedGlobAlternative(pattern: string, originalPattern: string): void {
+  if (/[,(|](?:\/|[A-Za-z]:\/)/.test(pattern)) {
+    throw new Error(`--files path must be inside the project cwd: ${originalPattern}`);
+  }
+}
+
+function assertNoUnsafeExtglobBody(pattern: string, originalPattern: string): void {
+  const normalized = pattern.replace(/\\/g, "/");
+  for (let index = 0; index < normalized.length - 1; index += 1) {
+    if (!isExtglobOperator(normalized[index]) || normalized[index + 1] !== "(") {
+      continue;
+    }
+    const end = findMatchingParen(normalized, index + 1);
+    if (end === undefined) {
+      continue;
+    }
+    const body = normalized.slice(index + 2, end);
+    if (body.includes("/") || body.includes("..")) {
+      throw new Error(`--files path must be inside the project cwd: ${originalPattern}`);
+    }
+    index = end;
+  }
+}
+
+function findMatchingParen(pattern: string, openIndex: number): number | undefined {
+  let depth = 0;
+  for (let index = openIndex; index < pattern.length; index += 1) {
+    if (pattern[index] === "(") {
+      depth += 1;
+    } else if (pattern[index] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return undefined;
+}
+
+function isExtglobOperator(char: string): boolean {
+  return char === "!" || char === "+" || char === "@" || char === "?" || char === "*";
 }
 
 async function normalizeMatchedFilePath(
@@ -511,10 +744,18 @@ async function normalizeMatchedFilePath(
   const absolute = path.resolve(cwd, entry);
   const realEntry = await fs.realpath(absolute);
   const realRelative = path.relative(realCwd, realEntry);
-  if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+  if (isOutsidePath(realRelative)) {
     throw new Error(`--files path must be inside the project cwd: ${entry}`);
   }
   return normalizeManifestPath(realRelative);
+}
+
+function isOutsidePath(relativePath: string): boolean {
+  return (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  );
 }
 
 async function realpathIfExists(filePath: string): Promise<string> {
