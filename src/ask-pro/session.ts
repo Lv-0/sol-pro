@@ -48,7 +48,6 @@ export interface AskProStatusFile {
   harvestCommand: string;
   dryRun: boolean;
   artifacts?: boolean;
-  thinkingTime?: "extended";
   temporary?: boolean;
   reason?: string;
 }
@@ -241,14 +240,12 @@ export async function updateAskProResumeCommand({
   sessionId,
   resumeCommand,
   harvestCommand,
-  thinkingTime,
   temporary,
 }: {
   cwd: string;
   sessionId: string;
   resumeCommand: string;
   harvestCommand?: string;
-  thinkingTime?: "extended";
   temporary?: boolean;
 }): Promise<AskProStatusFile> {
   const paths = getAskProSessionPaths(cwd, sessionId);
@@ -257,7 +254,6 @@ export async function updateAskProResumeCommand({
     ...current,
     resumeCommand,
     harvestCommand: harvestCommand ?? current.harvestCommand,
-    ...(thinkingTime ? { thinkingTime } : {}),
     ...(temporary !== undefined ? { temporary } : {}),
     updatedAt: new Date().toISOString(),
   };

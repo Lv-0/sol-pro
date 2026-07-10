@@ -23,7 +23,7 @@ type ThinkingTimeOutcome =
  * ChatGPT moved the effort selector into the per-model trailing button), log a
  * debug dump and continue with whatever effort the UI defaults to.
  *
- * @param level - The thinking time intensity: 'light', 'standard', 'extended', or 'heavy'
+ * @param level - The intelligence or legacy thinking-time level to select.
  */
 export async function ensureThinkingTime(
   Runtime: ChromeClient["Runtime"],
@@ -44,6 +44,11 @@ export async function ensureThinkingTime(
     case "menu-not-found":
     case "option-not-found": {
       await logDomFailure(Runtime, logger, `thinking-${result.status}`);
+      if (level === "pro") {
+        throw new Error(
+          `Unable to select Pro intelligence: ${result.status.replaceAll("-", " ")}.`,
+        );
+      }
       logger(
         `Thinking time: ${result.status.replaceAll("-", " ")} (requested ${capitalizedLevel}); continuing with ChatGPT default.`,
       );
@@ -51,6 +56,9 @@ export async function ensureThinkingTime(
     }
     default: {
       await logDomFailure(Runtime, logger, "thinking-time-unknown");
+      if (level === "pro") {
+        throw new Error("Unable to select Pro intelligence: unknown picker outcome.");
+      }
       logger(
         `Thinking time: unknown outcome selecting ${capitalizedLevel}; continuing with ChatGPT default.`,
       );
@@ -62,7 +70,7 @@ export async function ensureThinkingTime(
 /**
  * Best-effort selection of a thinking time level in ChatGPT's composer pill menu.
  * Safe by default: if the pill/menu/option isn't present, we continue without throwing.
- * @param level - The thinking time intensity: 'light', 'standard', 'extended', or 'heavy'
+ * @param level - The intelligence or legacy thinking-time level to select.
  */
 export async function ensureThinkingTimeIfAvailable(
   Runtime: ChromeClient["Runtime"],
@@ -138,12 +146,14 @@ function buildThinkingTimeExpression(level: ThinkingTimeLevel): string {
       standard: ['standard', '标准'],
       extended: ['extended', 'langer', '扩展', '深度', '加强'],
       heavy: ['heavy', '重度', '加重', '高'],
+      pro: ['pro'],
     };
     const CURRENT_INTELLIGENCE_TOKENS = {
       light: ['instant', ...LEVEL_TOKENS.light],
       standard: ['medium', ...LEVEL_TOKENS.standard],
       extended: ['pro', ...LEVEL_TOKENS.extended],
       heavy: ['high', ...LEVEL_TOKENS.heavy],
+      pro: ['pro'],
     };
     const targetTokens = LEVEL_TOKENS[TARGET_LEVEL] || [TARGET_LEVEL];
     const currentIntelligenceTokens = CURRENT_INTELLIGENCE_TOKENS[TARGET_LEVEL] || [TARGET_LEVEL];

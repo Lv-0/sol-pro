@@ -35,7 +35,6 @@ interface AskProOptions {
   status?: string | boolean;
   harvest?: string | boolean;
   copy?: string | boolean;
-  extended?: boolean;
   temporary?: boolean;
   cwd?: string;
   verbose?: boolean;
@@ -57,10 +56,6 @@ program
   .option("--status [session-id]", "show ask-pro session status")
   .option("--harvest [session-id]", "print harvested ANSWER.md for a session")
   .option("--copy [session-id]", "print the copy target for a session")
-  .option(
-    "--extended",
-    "request Extended Pro thinking; use only when a multi-hour wait is acceptable",
-  )
   .option("--temporary", "require ChatGPT Temporary Chat; default runs already try it first")
   .option("--no-temporary", "retry a session outside ChatGPT Temporary Chat")
   .addOption(new Option("--cwd <path>", "project working directory").hideHelp())
@@ -151,7 +146,6 @@ async function runAskPro(question: string, options: AskProOptions): Promise<void
         sessionId: status.sessionId,
         resumeCommand,
         harvestCommand,
-        thinkingTime: effectiveOptions.extended ? "extended" : undefined,
         temporary: effectiveOptions.temporary,
       });
     }
@@ -181,7 +175,6 @@ async function runAskPro(question: string, options: AskProOptions): Promise<void
       sessionId: session.id,
       resumeCommand,
       harvestCommand,
-      thinkingTime: options.extended ? "extended" : undefined,
       temporary: options.temporary,
     });
   }
@@ -251,7 +244,6 @@ async function submitOrResumeBrowserSession(
       await resumeAskProBrowserSession({
         cwd,
         sessionId,
-        thinkingTime: requestedThinkingTime(options),
         temporary: options.temporary,
         verbose: options.verbose,
       });
@@ -273,7 +265,6 @@ async function submitOrResumeBrowserSession(
     await runAskProBrowserSession({
       cwd,
       sessionId,
-      thinkingTime: requestedThinkingTime(options),
       temporary: options.temporary,
       verbose: options.verbose,
     });
@@ -291,13 +282,8 @@ async function submitOrResumeBrowserSession(
   }
 }
 
-function requestedThinkingTime(options: AskProOptions): "extended" | undefined {
-  return options.extended ? "extended" : undefined;
-}
-
 function buildResumeCommand(sessionId: string, options: AskProOptions, cwd: string): string {
   const flags = [
-    options.extended ? "--extended" : null,
     options.temporary === true ? "--temporary" : null,
     options.temporary === false ? "--no-temporary" : null,
   ];
@@ -372,12 +358,11 @@ function quoteCommandArg(value: string): string {
 
 function mergeStatusOptions(
   options: AskProOptions,
-  status: { thinkingTime?: "extended"; temporary?: boolean },
+  status: { temporary?: boolean },
 ): AskProOptions {
   const temporary = options.temporary !== undefined ? options.temporary : status.temporary;
   return {
     ...options,
-    extended: options.extended === true || status.thinkingTime === "extended",
     temporary,
   };
 }
@@ -387,7 +372,6 @@ function printStatusRecord(status: AskProStatusFile, extra: AskProToonFields = {
     session: status.sessionId,
     state: normalizeState(status.status),
     reason: status.reason,
-    thinking: status.thinkingTime ?? "standard",
     temporary: normalizeTemporary(status.temporary),
     action: actionForStatus(status),
     resume: shouldPrintResume(status) ? status.resumeCommand : undefined,

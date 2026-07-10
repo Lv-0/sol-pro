@@ -5,6 +5,7 @@ import {
   buildModelMatchersLiteralForTest,
   buildModelSelectionExpressionForTest,
 } from "../../src/browser/actions/modelSelection.js";
+import { mapChatGptModelToBrowserLabel } from "../../src/browser/chatgptModelCatalog.js";
 
 const expectContains = (arr: string[], value: string) => {
   expect(arr).toContain(value);
@@ -145,6 +146,10 @@ const runModelSelectionExpression = async (
 };
 
 describe("browser model selection matchers", () => {
+  it("keeps retained model labels version-specific", () => {
+    expect(mapChatGptModelToBrowserLabel("gpt-5.5-pro")).toBe("GPT-5.5 Pro");
+  });
+
   it("includes pro + 5.4 tokens for gpt-5.4-pro", () => {
     const { labelTokens, testIdTokens } = buildModelMatchersLiteralForTest("gpt-5.4-pro");
     expect(labelTokens.some((t) => t.includes("pro"))).toBe(true);
@@ -154,16 +159,16 @@ describe("browser model selection matchers", () => {
     );
   });
 
-  it("requires a 5.5 label match for gpt-5.5-pro", () => {
-    const { labelTokens, testIdTokens } = buildModelMatchersLiteralForTest("gpt-5.5-pro");
+  it("requires a 5.6 label match for gpt-5.6-pro", () => {
+    const { labelTokens, testIdTokens } = buildModelMatchersLiteralForTest("gpt-5.6-pro");
     expect(labelTokens.some((t) => t.includes("pro"))).toBe(true);
-    expect(labelTokens.some((t) => t.includes("5.5") || t.includes("5-5"))).toBe(true);
-    expect(testIdTokens.some((t) => t.includes("gpt-5.5-pro") || t.includes("gpt-5-5-pro"))).toBe(
+    expect(labelTokens.some((t) => t.includes("5.6") || t.includes("5-6"))).toBe(true);
+    expect(testIdTokens.some((t) => t.includes("gpt-5.6-pro") || t.includes("gpt-5-6-pro"))).toBe(
       true,
     );
 
-    const expression = buildModelSelectionExpressionForTest("gpt-5.5-pro");
-    expect(expression).toContain('const TARGET_VERSION = "5-5"');
+    const expression = buildModelSelectionExpressionForTest("gpt-5.6-pro");
+    expect(expression).toContain('const TARGET_VERSION = "5-6"');
     expect(expression).toContain('const TARGET_KIND = "pro"');
     expect(expression).toContain("const VERSION_PATTERNS");
     expect(expression).toContain("const findModelButton = () =>");
@@ -307,28 +312,51 @@ describe("browser model selection matchers", () => {
     expect(result).toEqual({ status: "switched", label: "Pro" });
   });
 
-  it("selects Pro from the current Intelligence High pill", async () => {
+  it("selects GPT-5.6 Sol from the bottom of the Intelligence picker", async () => {
+    let submenuClicked = false;
+    let modelClicked = false;
     const modelButton = new FakeElement("High", {
       "aria-haspopup": "menu",
       class: "__composer-pill __composer-pill--neutral",
     });
-    const option = new FakeElement("Pro5+ min", { role: "menuitemradio" }, [], () => {
-      modelButton.textContent = "Pro";
-      option.setAttribute("aria-checked", "true");
-    });
-    const menu = new FakeElement("Intelligence Instant5s Medium5-30s High15-60s Pro5+ min", {}, [
-      new FakeElement("Instant5s", { role: "menuitemradio" }),
-      new FakeElement("Medium5-30s", { role: "menuitemradio" }),
-      new FakeElement("High15-60s", { role: "menuitemradio" }),
+    const submenu = new FakeElement(
+      "GPT-5.6 Sol",
+      {
+        "aria-haspopup": "menu",
+        "data-has-submenu": "",
+        role: "menuitem",
+      },
+      [],
+      () => {
+        submenuClicked = true;
+      },
+    );
+    const option = new FakeElement(
+      "GPT-5.6 Sol",
+      { "aria-checked": "false", role: "menuitemradio" },
+      [],
+      () => {
+        modelClicked = true;
+        option.setAttribute("aria-checked", "true");
+      },
+    );
+    const menu = new FakeElement("Intelligence Instant Medium High Pro GPT-5.6 Sol", {}, [
+      new FakeElement("Instant", { role: "menuitemradio" }),
+      new FakeElement("Medium", { role: "menuitemradio" }),
+      new FakeElement("High", { role: "menuitemradio" }),
+      new FakeElement("Pro", { role: "menuitemradio" }),
+      submenu,
       option,
     ]);
 
     const result = await runModelSelectionExpression(
-      "Pro",
+      "GPT-5.6 Sol",
       new FakeDocument([modelButton], [menu]),
     );
 
-    expect(result).toEqual({ status: "switched", label: "Pro" });
+    expect(result).toEqual({ status: "switched", label: "GPT-5.6 Sol" });
+    expect(submenuClicked).toBe(false);
+    expect(modelClicked).toBe(true);
   });
 
   it("accepts Pro Extended when the picker closes but the pill stays effort-only", async () => {
@@ -358,7 +386,7 @@ describe("browser model selection matchers", () => {
 
     const result = await runModelSelectionExpression("Pro", document);
 
-    expect(result).toEqual({ status: "switched", label: "Heavy" });
+    expect(result).toEqual({ status: "switched", label: "Pro • Extended" });
   });
 
   it("does not accept Pro Extended when the picker stays open without selected evidence", async () => {
@@ -577,7 +605,7 @@ describe("browser model selection matchers", () => {
 
     const result = await runModelSelectionExpression("gpt-5.5-pro", document);
 
-    expect(result).toEqual({ status: "switched", label: "Standard" });
+    expect(result).toEqual({ status: "switched", label: "Pro Standard" });
   });
 
   it("does not accept an ignored Pro row click while the composer pill remains effort-only", async () => {

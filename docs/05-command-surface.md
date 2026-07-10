@@ -57,7 +57,6 @@ ask-pro --resume [session-id]
 ask-pro --status [session-id]
 ask-pro --harvest [session-id]
 ask-pro --copy [session-id]
-ask-pro --extended "<question>"
 ask-pro --temporary "<question>"
 ask-pro --no-temporary --resume [session-id]
 ```
@@ -76,11 +75,8 @@ cwd and backslash paths are normalized to relative POSIX manifest paths. Prefer
 In cached-runner fallback mode, this is required whenever the files belong to a
 different repo than the cached plugin runner.
 
-Do not expose broad model/preset complexity in the normal path. `--extended` is
-the single explicit long-thinking opt-in for hard architecture, production-risk,
-and implementation-plan package questions where a multi-hour wait is acceptable.
-If the ChatGPT picker shows a bare `Pro` label, treat it as the current latest
-Pro target; exact model-version labels are hints, not a required UI contract.
+Do not expose model/preset complexity in the CLI. Select `GPT-5.6 Sol`, then
+`Pro` intelligence in ChatGPT's picker.
 Fresh runs try Temporary Chat by default and automatically retry in normal
 ChatGPT if the current account hides Pro models there. `--temporary` makes
 Temporary Chat strict and disables that fallback; `--no-temporary` starts or
@@ -98,8 +94,8 @@ bundles, and recoverability-sensitive work, agents should prefer
 4. open or attach to ChatGPT browser
 5. start in Temporary Chat unless `--no-temporary` is set
 6. fall back to normal ChatGPT if the default Temporary Chat path hides Pro
-7. select best Pro target if possible
-8. select normal Pro thinking effort, or Extended when `--extended` is set
+7. select `GPT-5.6 Sol`
+8. select `Pro` intelligence
 9. upload context
 10. submit
 11. wait/heartbeat/status
@@ -131,7 +127,6 @@ Status/create/auth/error records should stay tiny and action-oriented:
 ask_pro
   session: 2026-05-01-billing-webhook
   state: waiting
-  thinking: standard
   temporary: default
   action: wait
   resume: "ask-pro --resume 2026-05-01-billing-webhook"

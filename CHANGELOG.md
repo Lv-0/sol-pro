@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Select `GPT-5.6 Sol`, then `Pro` intelligence in ChatGPT, and remove the
+  obsolete `--extended` CLI/session surface now that Pro is a single tier.
 - Remove the unused example config file, collapse the ask-pro session status
   contract to runner-owned V1 states, and reject non-managed browser profile
   metadata instead of preserving a legacy profile mode.

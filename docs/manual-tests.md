@@ -90,11 +90,9 @@ Expected:
 - Chrome opens with the ask-pro profile.
 - Fresh default runs open Temporary Chat first.
 - ChatGPT stays in English UI if possible.
-- The model picker can select the Pro path.
+- The model picker selects `GPT-5.6 Sol`, then `Pro` intelligence.
 - If Temporary Chat hides Pro for the current account/UI, the run retries in
   normal ChatGPT.
-- If the current ChatGPT UI shows Configure / `Pro thinking effort`, the run
-  selects `Extended` when available.
 - The top-right temporary-chat control does not confuse the run state.
 - Upload logs show the context bundle was queued and uploaded.
 - `ANSWER.md` contains `ASK_PRO_BROWSER_OK`.
@@ -124,6 +122,10 @@ should report `responseZip.status = "not_requested"`.
 
 ## Recent Smoke Runs
 
+- 2026-07-10 - `2026-07-10T145226-return-exactly-one-line-and-nothing-else-ask-pro-d95f47cc`
+  selected `GPT-5.6 Sol`, confirmed `Pro` intelligence, uploaded the README
+  context bundle, harvested `ASK_PRO_GPT56_SOL_PRO_OK`, and completed browser
+  cleanup.
 - 2026-05-01 - `2026-05-01T165438-return-exactly-ask-pro-browser-login-ready`
   completed through the ask-pro browser profile and harvested
   `ASK_PRO_BROWSER_LOGIN_READY`.

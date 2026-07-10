@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 describe("ask-pro cli", () => {
-  test("documents the extended thinking switch", async () => {
+  test("documents the V1 switches", async () => {
     const cli = path.join(process.cwd(), "bin", "ask-pro-cli.ts");
     const tsxLoader = pathToFileURL(
       path.join(process.cwd(), "node_modules", "tsx", "dist", "esm", "index.mjs"),
@@ -26,12 +26,11 @@ describe("ask-pro cli", () => {
       "--help",
     ]);
 
-    expect(stdout).toContain("--extended");
+    expect(stdout).not.toContain("--extended");
     expect(stdout).toContain("--temporary");
     expect(stdout).toContain("--no-temporary");
     expect(stdout).toContain("--prompt-file");
     expect(stdout).toContain("--artifacts");
-    expect(stdout).toContain("multi-hour wait");
   }, 30000);
 
   test("creates a dry-run session", async () => {
@@ -144,7 +143,7 @@ describe("ask-pro cli", () => {
     ).href;
     await execFileAsync(
       process.execPath,
-      ["--import", tsxLoader, cli, "--dry-run", "--extended", "Review this."],
+      ["--import", tsxLoader, cli, "--dry-run", "Review this."],
       { cwd },
     );
 
@@ -157,7 +156,7 @@ describe("ask-pro cli", () => {
     expect(stderr).toBe("");
     expect(stdout).toMatch(/^ask_pro\n/);
     expect(stdout).toContain("  state: dry_run_complete\n");
-    expect(stdout).toContain("  thinking: extended\n");
+    expect(stdout).not.toContain("  thinking:");
     expect(stdout).toContain("  temporary: default\n");
     expect(stdout).toContain("  action: resume\n");
     expect(stdout).not.toContain("{");
@@ -895,7 +894,7 @@ describe("ask-pro cli", () => {
     });
   }, 30000);
 
-  test("preserves extended and temporary flags in dry-run resume command", async () => {
+  test("preserves the temporary flag in dry-run resume command", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-cli-resume-"));
     tempDirs.push(cwd);
 
@@ -905,7 +904,7 @@ describe("ask-pro cli", () => {
     ).href;
     const { stdout } = await execFileAsync(
       process.execPath,
-      ["--import", tsxLoader, cli, "--dry-run", "--extended", "--temporary", "Review this."],
+      ["--import", tsxLoader, cli, "--dry-run", "--temporary", "Review this."],
       { cwd },
     );
 
@@ -915,11 +914,10 @@ describe("ask-pro cli", () => {
       "utf8",
     );
     expect(JSON.parse(statusRaw)).toMatchObject({
-      thinkingTime: "extended",
       temporary: true,
-      resumeCommand: expect.stringContaining("--extended --temporary --resume"),
+      resumeCommand: expect.stringContaining("--temporary --resume"),
     });
-    expect(stdout).toContain("  thinking: extended\n");
+    expect(stdout).not.toContain("  thinking:");
     expect(stdout).toContain("  temporary: strict\n");
   }, 30000);
 
@@ -959,7 +957,7 @@ describe("ask-pro cli", () => {
     ).href;
     await execFileAsync(
       process.execPath,
-      ["--import", tsxLoader, cli, "--dry-run", "--extended", "Review this."],
+      ["--import", tsxLoader, cli, "--dry-run", "Review this."],
       { cwd, env: { ...process.env, npm_lifecycle_event: "start" } },
     );
 
@@ -969,7 +967,7 @@ describe("ask-pro cli", () => {
       "utf8",
     );
     expect(JSON.parse(statusRaw)).toMatchObject({
-      resumeCommand: expect.stringMatching(/^ask-pro --extended --resume /),
+      resumeCommand: expect.stringMatching(/^ask-pro --resume /),
     });
   }, 30000);
 
@@ -983,7 +981,7 @@ describe("ask-pro cli", () => {
     ).href;
     await execFileAsync(
       process.execPath,
-      ["--import", tsxLoader, cli, "--dry-run", "--extended", "Review this."],
+      ["--import", tsxLoader, cli, "--dry-run", "Review this."],
       {
         cwd,
         env: {
@@ -1002,7 +1000,7 @@ describe("ask-pro cli", () => {
     );
     expect(JSON.parse(statusRaw)).toMatchObject({
       resumeCommand: expect.stringMatching(
-        /^npm exec --yes pnpm@10\.33\.2 -- --dir "C:\/Code\/ask-pro" start -- --cwd ".+" --extended --resume /,
+        /^npm exec --yes pnpm@10\.33\.2 -- --dir "C:\/Code\/ask-pro" start -- --cwd ".+" --resume /,
       ),
       harvestCommand: expect.stringMatching(
         /^npm exec --yes pnpm@10\.33\.2 -- --dir "C:\/Code\/ask-pro" start -- --cwd ".+" --harvest /,

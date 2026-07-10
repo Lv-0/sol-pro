@@ -21,14 +21,14 @@ Mitigation:
 - human logs in manually
 - never automate credentials
 
-## Pro model / thinking mode unavailable
+## GPT-5.6 Sol / Pro intelligence unavailable
 
-Risk: selected Pro/heavy/extended target is missing.
+Risk: the selected model or Pro intelligence target is missing.
 
 Mitigation:
 
-- target best available Pro mode
-- do not fail if thinking effort selection is unavailable
+- select GPT-5.6 Sol before Pro intelligence
+- do not submit if the required model is unavailable
 - log selected visible label
 
 ## Temporary Chat incompatibility

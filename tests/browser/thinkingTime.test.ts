@@ -1,7 +1,10 @@
 import { performance } from "node:perf_hooks";
 import { createContext, Script } from "node:vm";
-import { describe, expect, it } from "vitest";
-import { buildThinkingTimeExpressionForTest } from "../../src/browser/actions/thinkingTime.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  buildThinkingTimeExpressionForTest,
+  ensureThinkingTime,
+} from "../../src/browser/actions/thinkingTime.js";
 
 class FakeElement extends EventTarget {
   parentElement: FakeElement | null = null;
@@ -188,7 +191,7 @@ class FakeDocument extends EventTarget {
 
 const runThinkingTimeExpression = async (
   document: FakeDocument,
-  level: "heavy" | "extended" | "standard",
+  level: "heavy" | "extended" | "standard" | "pro",
   options: { fastTimeout?: boolean } = {},
 ) => {
   let now = 0;
@@ -220,6 +223,17 @@ const runThinkingTimeExpression = async (
 };
 
 describe("browser thinking-time selection expression", () => {
+  it("fails closed when Pro intelligence is unavailable", async () => {
+    const Runtime = {
+      evaluate: vi.fn().mockResolvedValue({ result: { value: { status: "option-not-found" } } }),
+    };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await expect(ensureThinkingTime(Runtime as never, "pro", logger)).rejects.toThrow(
+      "Unable to select Pro intelligence: option not found.",
+    );
+  });
+
   it("uses centralized menu selectors and normalized matching", () => {
     const expression = buildThinkingTimeExpressionForTest();
     expect(expression).toContain("const MENU_CONTAINER_SELECTOR");
@@ -502,37 +516,37 @@ describe("browser thinking-time selection expression", () => {
     expect(extendedClicked).toBe(true);
   });
 
-  it("treats the current Intelligence Pro tier as Extended", async () => {
+  it("selects Pro from the current GPT-5.6 Intelligence picker", async () => {
     let proClicked = false;
-    const modelButton = new FakeElement("Pro", {
+    const modelButton = new FakeElement("High", {
       "aria-haspopup": "menu",
       class: "__composer-pill __composer-pill--neutral",
     });
     const proOption = new FakeElement(
-      "Pro5+ min",
-      { "aria-checked": "true", role: "menuitemradio" },
+      "Pro",
+      { "aria-checked": "false", role: "menuitemradio" },
       [],
       () => {
         proClicked = true;
       },
     );
     const menu = new FakeElement(
-      "Intelligence Instant5s Medium5-30s High15-60s Pro5+ min GPT-5.5",
+      "Intelligence Instant Medium High Pro GPT-5.6 Sol",
       { "data-testid": "composer-intelligence-picker-content", role: "menu" },
       [
-        new FakeElement("Instant5s", { role: "menuitemradio" }),
-        new FakeElement("Medium5-30s", { role: "menuitemradio" }),
-        new FakeElement("High15-60s", { role: "menuitemradio" }),
+        new FakeElement("Instant", { role: "menuitemradio" }),
+        new FakeElement("Medium", { role: "menuitemradio" }),
+        new FakeElement("High", { role: "menuitemradio" }),
         proOption,
-        new FakeElement("GPT-5.5", { role: "menuitem" }),
+        new FakeElement("GPT-5.6 Sol", { role: "menuitem" }),
       ],
     );
     const document = new FakeDocument(modelButton, [], {}, [], [menu]);
 
-    const result = await runThinkingTimeExpression(document, "extended");
+    const result = await runThinkingTimeExpression(document, "pro");
 
-    expect(result).toEqual({ status: "already-selected", label: "Pro5+ min" });
-    expect(proClicked).toBe(false);
+    expect(result).toEqual({ status: "switched", label: "Pro" });
+    expect(proClicked).toBe(true);
   });
 
   it("keeps fallback paths when the current Intelligence menu is unmatched", async () => {

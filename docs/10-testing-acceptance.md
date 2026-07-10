@@ -23,8 +23,7 @@ Test with fake DOM fixtures:
 - model picker button detection
 - composer-pill detection
 - Pro model row detection
-- thinking effort menu detection
-- missing thinking effort does not fail run
+- Pro intelligence menu detection
 - send button readiness
 - attachment upload completion
 

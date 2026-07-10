@@ -74,12 +74,7 @@ Ask for an inline markdown consult:
 ask-pro --no-temporary --prompt-file question.md --files src --files tests
 ```
 
-Use `--extended` only for deep, long-running architecture or production-risk
-questions:
-
-```powershell
-ask-pro --extended --no-temporary --prompt-file architecture.md --files docs --files src
-```
+The browser flow selects `GPT-5.6 Sol`, then `Pro` intelligence automatically.
 
 Request generated files only when you really need an implementation package:
 
@@ -134,7 +129,6 @@ Common options:
 - `--resume [session-id]`: resume a prepared, waiting, or auth-gated session.
 - `--status [session-id]`: print compact session state.
 - `--harvest [session-id]`: print `ANSWER.md` for answer-bearing sessions.
-- `--extended`: request Extended Pro thinking.
 - `--temporary`: require ChatGPT Temporary Chat.
 - `--no-temporary`: use normal ChatGPT for better recovery.
 - `--verbose`: print browser automation diagnostics.

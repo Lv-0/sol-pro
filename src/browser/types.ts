@@ -4,7 +4,7 @@ import type Protocol from "devtools-protocol";
 export type ChromeClient = Awaited<ReturnType<typeof CDP>>;
 export type CookieParam = Protocol.Network.CookieParam;
 export type BrowserModelStrategy = "select" | "current" | "ignore";
-export type ThinkingTimeLevel = "light" | "standard" | "extended" | "heavy";
+export type ThinkingTimeLevel = "light" | "standard" | "extended" | "heavy" | "pro";
 
 export type BrowserLogger = ((message: string) => void) & {
   verbose?: boolean;
@@ -77,7 +77,7 @@ export interface BrowserAutomationConfig {
   manualLoginCookieSync?: boolean;
   manualLoginWaitMs?: number;
   acceptLanguage?: string;
-  /** Thinking time intensity level for Thinking/Pro models: light, standard, extended, heavy */
+  /** Intelligence or legacy thinking-time level to select in ChatGPT. */
   thinkingTime?: ThinkingTimeLevel;
 }
 

@@ -62,11 +62,9 @@ When invoked:
    `harvest` command when that is the next action.
 8. Treat the answer as advisory; turn it into your own plan before editing code.
 
-By default, `ask-pro` uses normal Pro thinking effort. Add `--extended` only for
-mega-hard architecture questions, production-risk reviews, or implementation
-plan packages where a multi-hour wait is acceptable.
-If ChatGPT labels the row simply as `Pro`, that is accepted as the current Pro
-target; do not require a specific dated model label in the prompt or workflow.
+`ask-pro` selects `GPT-5.6 Sol`, then `Pro` intelligence. Do not require a
+different dated model label or a separate thinking-effort control in the prompt
+or workflow.
 
 Fresh runs try ChatGPT Temporary Chat by default and automatically fall back to
 normal ChatGPT if the current account/UI does not expose Pro there. For repo
@@ -147,7 +145,6 @@ state is `INCOMPLETE_ANSWER` / `preamble_without_artifacts`, do not treat
 ```bash
 ask-pro "Review the async billing webhook migration plan and return an implementation plan."
 ask-pro --no-temporary --prompt-file question.md --files src --files tests
-ask-pro --extended "Produce a deep implementation plan for this risky migration."
 ask-pro --temporary "Review this sensitive migration plan, and fail if Temporary Chat cannot use Pro."
 ask-pro --no-temporary "Review this in normal ChatGPT instead of Temporary Chat."
 ask-pro --prompt-file question.md --files .\src

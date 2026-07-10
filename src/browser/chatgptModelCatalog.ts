@@ -1,5 +1,5 @@
 export type ChatGptBrowserModelName = string;
-export type ChatGptBrowserModelVersion = "5-5" | "5-4" | "5-2" | "5-1" | "5-0";
+export type ChatGptBrowserModelVersion = "5-6" | "5-5" | "5-4" | "5-2" | "5-1" | "5-0";
 export type ChatGptBrowserModelKind = "pro" | "thinking" | "instant" | null;
 
 export interface ChatGptVisibleAlias {
@@ -30,13 +30,20 @@ export interface ChatGptModelMatchers {
   versionPatterns: ChatGptVersionPattern[];
 }
 
-export const LATEST_CHATGPT_BROWSER_PRO_MODEL = "gpt-5.5-pro" as const;
-export const DEFAULT_CHATGPT_BROWSER_MODEL_LABEL = "GPT-5.5 Pro";
+export const LATEST_CHATGPT_BROWSER_PRO_MODEL = "gpt-5.6-pro" as const;
+export const DEFAULT_CHATGPT_BROWSER_MODEL_LABEL = "GPT-5.6 Sol";
 
 const CHATGPT_BROWSER_MODEL_TARGETS: ChatGptBrowserModelTarget[] = [
   {
+    model: "gpt-5.6-pro",
+    label: "GPT-5.6 Sol Pro",
+    version: "5-6",
+    kind: "pro",
+    visibleAliases: [{ includes: ["pro"], excludes: ["thinking", "instant", "search", "project"] }],
+  },
+  {
     model: "gpt-5.5-pro",
-    label: DEFAULT_CHATGPT_BROWSER_MODEL_LABEL,
+    label: "GPT-5.5 Pro",
     version: "5-5",
     kind: "pro",
     visibleAliases: [
@@ -71,6 +78,11 @@ const CHATGPT_BROWSER_ALIASES = new Map<string, ChatGptBrowserModelName>([
 ]);
 
 export const CHATGPT_BROWSER_VERSION_PATTERNS: ChatGptVersionPattern[] = [
+  {
+    version: "5-6",
+    textTokens: ["5 6", "gpt56"],
+    testIdTokens: ["5-6", "5.6", "gpt-5-6", "gpt-5.6", "gpt56"],
+  },
   {
     version: "5-5",
     textTokens: ["5 5", "gpt55"],
@@ -133,6 +145,9 @@ export function inferChatGptBrowserModelFromLabel(
 
   const version = inferVersionFromText(normalized);
   const kind = inferKindFromText(normalized);
+  if (version === "5-6") {
+    return kind === "pro" ? "gpt-5.6-pro" : "gpt-5.6";
+  }
   if (version === "5-5") {
     return kind === "pro" ? "gpt-5.5-pro" : "gpt-5.5";
   }
@@ -284,6 +299,9 @@ function getChatGptBrowserTarget(
 
 function inferVersionFromText(value: string): ChatGptBrowserModelVersion | null {
   const normalized = value.replace(/_/g, ".").replace(/\s+/g, " ");
+  if (/(^|[^0-9])5[.\-\s]?6([^0-9]|$)/.test(normalized) || normalized.includes("gpt56")) {
+    return "5-6";
+  }
   if (/(^|[^0-9])5[.\-\s]?5([^0-9]|$)/.test(normalized) || normalized.includes("gpt55")) {
     return "5-5";
   }
@@ -324,6 +342,9 @@ function visibleAliasesFor(
   version: ChatGptBrowserModelVersion | null,
   kind: ChatGptBrowserModelKind,
 ): ChatGptVisibleAlias[] {
+  if (version === "5-6" && kind === "pro") {
+    return [{ includes: ["pro"], excludes: ["thinking", "instant", "search", "project"] }];
+  }
   if (version === "5-5" && kind === "pro") {
     return [
       { includes: ["pro"], excludes: ["thinking", "instant", "search", "project"] },

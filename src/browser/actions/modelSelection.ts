@@ -473,13 +473,18 @@ function buildModelSelectionExpression(
           const text = option.textContent ?? '';
           const normalizedText = normalize(text);
           const testid = option.getAttribute('data-testid') ?? '';
-          const score = scoreOption(normalizedText, testid);
-          if (score <= 0) {
+          const isSubmenu =
+            testid.toLowerCase().includes('submenu') ||
+            option.getAttribute('data-has-submenu') !== null ||
+            option.getAttribute('aria-haspopup') === 'menu';
+          const baseScore = scoreOption(normalizedText, testid);
+          if (baseScore <= 0) {
             continue;
           }
+          const score = baseScore + (isSubmenu ? 0 : 1);
           const label = getOptionLabel(option);
           if (!bestMatch || score > bestMatch.score) {
-            bestMatch = { node: option, label, score, testid, normalizedText };
+            bestMatch = { node: option, label, score, testid, normalizedText, isSubmenu };
           }
         }
       }
@@ -527,14 +532,16 @@ function buildModelSelectionExpression(
           if (optionIsSelected(match.node)) {
             await restoreWakeDraft();
             closeMenu();
-            resolve({ status: 'already-selected', label: getButtonLabel() || match.label });
+            resolve({
+              status: 'already-selected',
+              label: buttonMatchesTarget() ? getButtonLabel() : match.label,
+            });
             return;
           }
           dispatchClickSequence(match.node);
           // Submenus (e.g. "Legacy models") need a second pass to pick the actual model option.
           // Keep scanning once the submenu opens instead of treating the submenu click as a final switch.
-          const isSubmenu = (match.testid ?? '').toLowerCase().includes('submenu');
-          if (isSubmenu) {
+          if (match.isSubmenu) {
             setTimeout(attempt, REOPEN_INTERVAL_MS / 2);
             return;
           }
@@ -550,7 +557,10 @@ function buildModelSelectionExpression(
             ) {
               await restoreWakeDraft();
               closeMenu();
-              resolve({ status: 'switched', label: getButtonLabel() || match.label });
+              resolve({
+                status: 'switched',
+                label: buttonMatchesTarget() ? getButtonLabel() : match.label,
+              });
               return;
             }
             if (performance.now() - start > MAX_WAIT_MS) {

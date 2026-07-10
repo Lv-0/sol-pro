@@ -11,7 +11,7 @@ import {
 import { runBrowserMode, type BrowserRunResult } from "../browserMode.js";
 import { closeTab } from "../browser/chromeLifecycle.js";
 import { resumeBrowserSession } from "../browser/reattach.js";
-import type { BrowserLogger, ThinkingTimeLevel } from "../browser/types.js";
+import type { BrowserLogger } from "../browser/types.js";
 import {
   appendAskProLog,
   getAskProSessionPaths,
@@ -24,8 +24,6 @@ import {
 } from "./session.js";
 import { harvestLatestAssistantZip, writeResponseZipManifest } from "./responseZip.js";
 
-type AskProThinkingTime = Extract<ThinkingTimeLevel, "extended">;
-
 const DEFAULT_TIMEOUT_MS = 180 * 60 * 1000;
 const MANUAL_LOGIN_WAIT_MS = 10 * 60 * 1000;
 const ASK_PRO_CHATGPT_URL = "https://chatgpt.com/";
@@ -36,7 +34,6 @@ const AUTH_READY_MARKER = "ask-pro-auth-ready.json";
 export interface RunAskProBrowserSessionOptions {
   cwd: string;
   sessionId: string;
-  thinkingTime?: AskProThinkingTime;
   temporary?: boolean;
   chatgptUrl?: string;
   browserProfileDir?: string;
@@ -48,7 +45,6 @@ export interface RunAskProBrowserSessionOptions {
 export async function runAskProBrowserSession({
   cwd,
   sessionId,
-  thinkingTime,
   temporary,
   chatgptUrl: chatgptUrlOverride,
   browserProfileDir,
@@ -63,7 +59,6 @@ export async function runAskProBrowserSession({
   const agentId = agentIdOverride !== undefined ? agentIdOverride : resolveAskProAgentId();
   const browserProfile = browserProfileDir ?? askProBrowserProfileDirForAgentId(agentId);
   const metadata = await readBrowserMetadata(paths.browser).catch(() => null);
-  const requestedThinkingTime = resolveAskProThinkingTime(thinkingTime, metadata?.thinkingTime);
   const chatgptUrl =
     chatgptUrlOverride ??
     (temporary === true
@@ -81,7 +76,6 @@ export async function runAskProBrowserSession({
       status: "pending",
       agentId,
       profileDir: browserProfile,
-      thinkingTime: requestedThinkingTime,
       temporary,
       url: chatgptUrl,
       acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -111,9 +105,9 @@ export async function runAskProBrowserSession({
         inputTimeoutMs: 90_000,
         assistantRecheckDelayMs: 30_000,
         assistantRecheckTimeoutMs: 180_000,
-        desiredModel: "Pro",
+        desiredModel: "GPT-5.6 Sol",
         modelStrategy: "select",
-        thinkingTime: requestedThinkingTime,
+        thinkingTime: "pro",
         acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
         startMinimized,
         keepBrowser: true,
@@ -131,7 +125,6 @@ export async function runAskProBrowserSession({
             status: "running",
             agentId,
             profileDir: browserProfile,
-            thinkingTime: requestedThinkingTime,
             temporary,
             url: chatgptUrl,
             acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -170,7 +163,6 @@ export async function runAskProBrowserSession({
         status: finalStatus.browserStatus,
         agentId,
         profileDir: browserProfile,
-        thinkingTime: requestedThinkingTime,
         temporary,
         url: chatgptUrl,
         acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -214,7 +206,6 @@ export async function runAskProBrowserSession({
         sessionId,
         resumeCommand: withNoTemporaryResumeCommand(sessionStatus.resumeCommand),
         harvestCommand: sessionStatus.harvestCommand,
-        thinkingTime: sessionStatus.thinkingTime,
         temporary: false,
       });
       const currentMetadata: AskProBrowserMetadata = await readBrowserMetadata(paths.browser).catch(
@@ -230,7 +221,6 @@ export async function runAskProBrowserSession({
           status: "running",
           agentId,
           profileDir: browserProfile,
-          thinkingTime: requestedThinkingTime,
           temporary: false,
           url: ASK_PRO_CHATGPT_URL,
           acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -240,7 +230,6 @@ export async function runAskProBrowserSession({
       return runAskProBrowserSession({
         cwd,
         sessionId,
-        thinkingTime: requestedThinkingTime,
         temporary: false,
         chatgptUrl: ASK_PRO_CHATGPT_URL,
         browserProfileDir: browserProfile,
@@ -260,7 +249,6 @@ export async function runAskProBrowserSession({
           status: "needs_user_auth",
           agentId,
           profileDir: browserProfile,
-          thinkingTime: requestedThinkingTime,
           temporary,
           url: chatgptUrl,
           acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -302,7 +290,6 @@ export async function runAskProBrowserSession({
 export async function resumeAskProBrowserSession({
   cwd,
   sessionId,
-  thinkingTime,
   temporary,
   verbose,
 }: RunAskProBrowserSessionOptions): Promise<void> {
@@ -312,7 +299,6 @@ export async function resumeAskProBrowserSession({
   const artifactsRequested = sessionStatus.artifacts === true;
   const logger = buildAskProBrowserLogger(cwd, sessionId, verbose);
   const metadata = await readBrowserMetadata(paths.browser);
-  const effectiveThinkingTime = resolveAskProThinkingTime(thinkingTime, metadata.thinkingTime);
   const effectiveTemporary = temporary ?? metadata.temporary;
   const chatgptUrl =
     effectiveTemporary === true
@@ -331,7 +317,6 @@ export async function resumeAskProBrowserSession({
     await runAskProBrowserSession({
       cwd,
       sessionId,
-      thinkingTime: effectiveThinkingTime,
       temporary: false,
       chatgptUrl: ASK_PRO_CHATGPT_URL,
       browserProfileDir: fallbackProfile,
@@ -357,7 +342,6 @@ export async function resumeAskProBrowserSession({
     await runAskProBrowserSession({
       cwd,
       sessionId,
-      thinkingTime: effectiveThinkingTime,
       temporary: effectiveTemporary,
       chatgptUrl: shouldPreserveUrl ? chatgptUrl : undefined,
       browserProfileDir: fallbackProfile,
@@ -377,7 +361,6 @@ export async function resumeAskProBrowserSession({
       schemaVersion: 1,
       status: "running",
       profileDir: fallbackProfile,
-      thinkingTime: effectiveThinkingTime,
       temporary: effectiveTemporary,
       url: chatgptUrl,
       acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -396,7 +379,8 @@ export async function resumeAskProBrowserSession({
         inputTimeoutMs: 90_000,
         acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
         url: chatgptUrl,
-        thinkingTime: effectiveThinkingTime,
+        desiredModel: "GPT-5.6 Sol",
+        thinkingTime: "pro",
         startMinimized: false,
       },
       logger,
@@ -412,7 +396,6 @@ export async function resumeAskProBrowserSession({
               schemaVersion: 1,
               status: "running",
               profileDir: fallbackProfile,
-              thinkingTime: effectiveThinkingTime,
               temporary: effectiveTemporary,
               url: chatgptUrl,
               acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -451,7 +434,6 @@ export async function resumeAskProBrowserSession({
         schemaVersion: 1,
         status: finalStatus.browserStatus,
         profileDir: fallbackProfile,
-        thinkingTime: effectiveThinkingTime,
         temporary: effectiveTemporary,
         url: chatgptUrl,
         acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -479,7 +461,6 @@ export async function resumeAskProBrowserSession({
           schemaVersion: 1,
           status: "needs_user_auth",
           profileDir: fallbackProfile,
-          thinkingTime: effectiveThinkingTime,
           temporary: effectiveTemporary,
           url: chatgptUrl,
           acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
@@ -574,10 +555,9 @@ function isTemporaryProUnavailableError(error: unknown): boolean {
   const message =
     error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return (
-    message.includes("temporary chat mode is active") &&
-    message.includes("pro") &&
-    (message.includes("unable to find model option matching") ||
-      message.includes("unable to locate the chatgpt model selector button"))
+    message.includes('unable to find model option matching "gpt-5.6 sol"') ||
+    message.includes("unable to locate the chatgpt model selector button") ||
+    message.includes("unable to select pro intelligence")
   );
 }
 
@@ -895,24 +875,11 @@ function browserResultToRuntime(result: BrowserRunResult): Record<string, unknow
   };
 }
 
-function resolveAskProThinkingTime(
-  requested: ThinkingTimeLevel | undefined,
-  stored: ThinkingTimeLevel | undefined,
-): AskProThinkingTime | undefined {
-  if (requested !== undefined && requested !== "extended") {
-    throw new Error(
-      "ask-pro only supports the Pro model with optional Extended Pro thinking. Non-Pro or Heavy/Standard/Light runtime modes are test-only and are not accepted.",
-    );
-  }
-  return requested ?? (stored === "extended" ? "extended" : undefined);
-}
-
 interface AskProBrowserMetadata {
   schemaVersion?: number;
   status?: string;
   profileDir?: string;
   agentId?: string | null;
-  thinkingTime?: ThinkingTimeLevel;
   temporary?: boolean;
   url?: string;
   acceptLanguage?: string;

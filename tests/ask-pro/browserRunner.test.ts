@@ -135,8 +135,8 @@ describe("ask-pro browser runner", () => {
       config: {
         url: "https://chatgpt.com/?temporary-chat=true",
         attachRunning: false,
-        desiredModel: "Pro",
-        thinkingTime: undefined,
+        desiredModel: "GPT-5.6 Sol",
+        thinkingTime: "pro",
         manualLoginProfileDir: expect.stringMatching(
           /agents[\\/]+review-t1-[a-f0-9]{10}[\\/]+browser-profile$/,
         ),
@@ -161,8 +161,8 @@ describe("ask-pro browser runner", () => {
       config: {
         url: "https://chatgpt.com/?temporary-chat=true",
         attachRunning: false,
-        desiredModel: "Pro",
-        thinkingTime: undefined,
+        desiredModel: "GPT-5.6 Sol",
+        thinkingTime: "pro",
         manualLoginProfileDir: testSharedProfileDir(),
       },
     });
@@ -288,48 +288,6 @@ describe("ask-pro browser runner", () => {
 
     const { status } = await readAskProStatus({ cwd, sessionId: session.id });
     expect(status.status).toBe("COMPLETED");
-  });
-
-  test("runs ask-pro sessions with extended thinking when requested", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-extended-"));
-    tempDirs.push(cwd);
-    const session = await createAskProSession({
-      cwd,
-      question: "Review with extended thinking.",
-      filePatterns: [],
-      dryRun: false,
-    });
-
-    await runAskProBrowserSession({ cwd, sessionId: session.id, thinkingTime: "extended" });
-
-    const firstCall = runBrowserModeMock.mock.calls[0] as unknown[] | undefined;
-    expect(firstCall?.[0]).toMatchObject({
-      config: {
-        thinkingTime: "extended",
-      },
-    });
-  });
-
-  test("rejects non-extended ask-pro thinking runtime modes", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-heavy-reject-"));
-    tempDirs.push(cwd);
-    const session = await createAskProSession({
-      cwd,
-      question: "Review with unsupported heavy thinking.",
-      filePatterns: [],
-      dryRun: false,
-    });
-
-    await expect(
-      (
-        runAskProBrowserSession as unknown as (options: {
-          cwd: string;
-          sessionId: string;
-          thinkingTime: "heavy";
-        }) => Promise<unknown>
-      )({ cwd, sessionId: session.id, thinkingTime: "heavy" }),
-    ).rejects.toThrow(/only supports the Pro model/i);
-    expect(runBrowserModeMock).not.toHaveBeenCalled();
   });
 
   test("marks preamble-only answers incomplete when no response zip exists", async () => {
@@ -585,9 +543,7 @@ describe("ask-pro browser runner", () => {
     });
     runBrowserModeMock
       .mockRejectedValueOnce(
-        new Error(
-          'Unable to find model option matching "GPT-5.5 Pro" in the model switcher. Temporary Chat mode is active; verify the model picker exposes Pro in the current account/UI.',
-        ),
+        new Error('Unable to find model option matching "GPT-5.6 Sol" in the model switcher.'),
       )
       .mockResolvedValueOnce({
         answerText: "agent answer",
@@ -628,6 +584,36 @@ describe("ask-pro browser runner", () => {
     });
   });
 
+  test("falls back to normal ChatGPT when default Temporary Chat lacks Pro intelligence", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-intelligence-fallback-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Review with Pro intelligence fallback.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock
+      .mockRejectedValueOnce(new Error("Unable to select Pro intelligence: option not found."))
+      .mockResolvedValueOnce({
+        answerText: "agent answer",
+        answerMarkdown: "# Agent\n",
+        browserTransport: "launched",
+      });
+
+    await runAskProBrowserSession({ cwd, sessionId: session.id });
+
+    expect(runBrowserModeMock).toHaveBeenCalledTimes(2);
+    const secondCall = runBrowserModeMock.mock.calls[1] as unknown[] | undefined;
+    expect(secondCall?.[0]).toMatchObject({
+      config: {
+        url: "https://chatgpt.com/",
+        desiredModel: "GPT-5.6 Sol",
+        thinkingTime: "pro",
+      },
+    });
+  });
+
   test("closes the failed temporary chat tab before falling back", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-temporary-close-"));
     tempDirs.push(cwd);
@@ -646,7 +632,7 @@ describe("ask-pro browser runner", () => {
           chromeTargetId: "temp-target",
         });
         throw new Error(
-          'Unable to find model option matching "GPT-5.5 Pro" in the model switcher. Temporary Chat mode is active; verify the model picker exposes Pro in the current account/UI.',
+          'Unable to find model option matching "GPT-5.6 Sol" in the model switcher.',
         );
       })
       .mockResolvedValueOnce({
@@ -681,11 +667,7 @@ describe("ask-pro browser runner", () => {
       dryRun: false,
     });
     runBrowserModeMock
-      .mockRejectedValueOnce(
-        new Error(
-          "Unable to locate the ChatGPT model selector button. Temporary Chat mode is active; verify the model picker exposes Pro in the current account/UI.",
-        ),
-      )
+      .mockRejectedValueOnce(new Error("Unable to locate the ChatGPT model selector button."))
       .mockResolvedValueOnce({
         answerText: "agent answer",
         answerMarkdown: "# Agent\n",
@@ -709,7 +691,7 @@ describe("ask-pro browser runner", () => {
     });
   });
 
-  test("does not fall back when model picker is missing without temporary-chat evidence", async () => {
+  test("does not fall back when the normal ChatGPT model picker is missing", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-run-picker-missing-"));
     tempDirs.push(cwd);
     const session = await createAskProSession({
@@ -722,9 +704,9 @@ describe("ask-pro browser runner", () => {
       new Error("Unable to locate the ChatGPT model selector button."),
     );
 
-    await expect(runAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
-      /model selector button/,
-    );
+    await expect(
+      runAskProBrowserSession({ cwd, sessionId: session.id, temporary: false }),
+    ).rejects.toThrow(/model selector button/);
 
     expect(runBrowserModeMock).toHaveBeenCalledTimes(1);
   });
@@ -739,14 +721,12 @@ describe("ask-pro browser runner", () => {
       dryRun: false,
     });
     runBrowserModeMock.mockRejectedValueOnce(
-      new Error(
-        'Unable to find model option matching "GPT-5.5 Pro" in the model switcher. Temporary Chat mode is active; verify the model picker exposes Pro in the current account/UI.',
-      ),
+      new Error('Unable to find model option matching "GPT-5.6 Sol" in the model switcher.'),
     );
 
     await expect(
       runAskProBrowserSession({ cwd, sessionId: session.id, temporary: true }),
-    ).rejects.toThrow(/temporary chat mode is active/i);
+    ).rejects.toThrow(/GPT-5\.6 Sol/);
 
     expect(runBrowserModeMock).toHaveBeenCalledTimes(1);
     const firstCall = runBrowserModeMock.mock.calls[0] as unknown[] | undefined;
@@ -903,7 +883,7 @@ describe("ask-pro browser runner", () => {
     runBrowserModeMock
       .mockRejectedValueOnce(
         new Error(
-          'Unable to find model option matching "GPT-5.5 Pro" in the model switcher. Temporary Chat mode is active; verify the model picker exposes Pro in the current account/UI.',
+          'Unable to find model option matching "GPT-5.6 Sol" in the model switcher. Temporary Chat mode is active; verify the model picker exposes Pro in the current account/UI.',
         ),
       )
       .mockResolvedValueOnce({
@@ -952,7 +932,7 @@ describe("ask-pro browser runner", () => {
     await updateAskProStatus({ cwd, sessionId: session.id, status: "NEEDS_USER_AUTH" });
     runBrowserModeMock.mockRejectedValueOnce(
       new Error(
-        'Unable to find model option matching "GPT-5.5 Pro" in the model switcher. Temporary Chat mode is active; verify the model picker exposes Pro in the current account/UI.',
+        'Unable to find model option matching "GPT-5.6 Sol" in the model switcher. Temporary Chat mode is active; verify the model picker exposes Pro in the current account/UI.',
       ),
     );
 
@@ -1226,12 +1206,12 @@ describe("ask-pro browser runner", () => {
     expect(manifest.responseZip.status).toBe("error");
   });
 
-  test("reattach preserves recorded extended thinking", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-thinking-"));
+  test("reattach selects GPT-5.6 Sol Pro intelligence", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-pro-"));
     tempDirs.push(cwd);
     const session = await createAskProSession({
       cwd,
-      question: "Review the saved extended-thinking browser session.",
+      question: "Review the saved browser session with Pro intelligence.",
       filePatterns: [],
       dryRun: false,
     });
@@ -1241,7 +1221,6 @@ describe("ask-pro browser runner", () => {
       metadata: {
         schemaVersion: 1,
         status: "running",
-        thinkingTime: "extended",
         profileDir: testSharedProfileDir(),
         runtime: {
           chromePort: 9223,
@@ -1256,89 +1235,14 @@ describe("ask-pro browser runner", () => {
 
     const firstCall = resumeBrowserSessionMock.mock.calls[0] as unknown[] | undefined;
     expect(firstCall?.[1]).toMatchObject({
-      thinkingTime: "extended",
+      desiredModel: "GPT-5.6 Sol",
+      thinkingTime: "pro",
     });
     const metadata = JSON.parse(
       await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
-    ) as { thinkingTime?: string; chromeMode?: string; acceptLanguage?: string };
-    expect(metadata.thinkingTime).toBe("extended");
+    ) as { chromeMode?: string; acceptLanguage?: string };
     expect(metadata.chromeMode).toBe("reused_devtools");
     expect(metadata.acceptLanguage).toBe("en-US,en");
-  });
-
-  test("reattach ignores stale recorded standard thinking", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-standard-"));
-    tempDirs.push(cwd);
-    const session = await createAskProSession({
-      cwd,
-      question: "Review the saved standard-thinking browser session.",
-      filePatterns: [],
-      dryRun: false,
-    });
-    await writeAskProBrowserMetadata({
-      cwd,
-      sessionId: session.id,
-      metadata: {
-        schemaVersion: 1,
-        status: "running",
-        thinkingTime: "standard",
-        profileDir: testSharedProfileDir(),
-        runtime: {
-          chromePort: 9224,
-          chromeHost: "127.0.0.1",
-          tabUrl: "https://chatgpt.com/c/test-standard",
-        },
-      },
-    });
-    await updateAskProStatus({ cwd, sessionId: session.id, status: "WAIT_TIMED_OUT" });
-
-    await resumeAskProBrowserSession({ cwd, sessionId: session.id });
-
-    const firstCall = resumeBrowserSessionMock.mock.calls[0] as unknown[] | undefined;
-    expect(firstCall?.[1]).toMatchObject({
-      thinkingTime: undefined,
-    });
-    const metadata = JSON.parse(
-      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
-    ) as { thinkingTime?: string };
-    expect(metadata.thinkingTime).toBeUndefined();
-  });
-
-  test("rejects non-extended thinking override on resume", async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-resume-heavy-reject-"));
-    tempDirs.push(cwd);
-    const session = await createAskProSession({
-      cwd,
-      question: "Resume with unsupported heavy thinking.",
-      filePatterns: [],
-      dryRun: false,
-    });
-    await writeAskProBrowserMetadata({
-      cwd,
-      sessionId: session.id,
-      metadata: {
-        schemaVersion: 1,
-        status: "running",
-        profileDir: path.join(cwd, "profile"),
-        runtime: {
-          chromePort: 9225,
-          chromeHost: "127.0.0.1",
-          tabUrl: "https://chatgpt.com/c/test-heavy",
-        },
-      },
-    });
-    await updateAskProStatus({ cwd, sessionId: session.id, status: "WAIT_TIMED_OUT" });
-
-    await expect(
-      (
-        resumeAskProBrowserSession as unknown as (options: {
-          cwd: string;
-          sessionId: string;
-          thinkingTime: "heavy";
-        }) => Promise<unknown>
-      )({ cwd, sessionId: session.id, thinkingTime: "heavy" }),
-    ).rejects.toThrow(/only supports the Pro model/i);
-    expect(resumeBrowserSessionMock).not.toHaveBeenCalled();
   });
 
   test("reattach auth failure refreshes browser preflight metadata", async () => {
@@ -1616,7 +1520,6 @@ describe("ask-pro browser runner", () => {
       metadata: {
         schemaVersion: 1,
         status: "needs_user_auth",
-        thinkingTime: "extended",
         profileDir: testSharedProfileDir(),
         url: "https://chatgpt.com/",
       },
@@ -1632,7 +1535,8 @@ describe("ask-pro browser runner", () => {
       config: {
         manualLoginProfileDir: testSharedProfileDir(),
         startMinimized: false,
-        thinkingTime: "extended",
+        desiredModel: "GPT-5.6 Sol",
+        thinkingTime: "pro",
         url: "https://chatgpt.com/",
       },
     });
