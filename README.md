@@ -69,6 +69,10 @@ Headed first-login and browser-challenge runs keep the original command waiting
 for up to the configured manual-login window and continue submission
 automatically when the ChatGPT composer becomes available. Use `--resume` only
 when the CLI has already returned a `needs_auth` action or the wait expired.
+Headed managed launches use normal interactive Chrome behavior instead of the
+launcher's automation-oriented defaults: extensions, sync, audio, password
+storage, and background services are not disabled. Remote debugging and the
+separate ask-pro profile remain required so the CLI can safely control Chrome.
 
 ## Quick Use
 

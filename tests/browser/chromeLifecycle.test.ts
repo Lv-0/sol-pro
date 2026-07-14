@@ -43,14 +43,40 @@ describe("chrome lifecycle window restore", () => {
 });
 
 describe("chrome lifecycle launch window state", () => {
-  test("keeps Chrome CPU protections enabled for long headed waits", () => {
+  test("launches headed Chrome without automation-oriented default flags", () => {
     const flags = buildChromeLaunchFlags(buildChromeFlags(false, undefined, "en-US,en"));
 
-    expect(flags).toContain("--disable-extensions");
+    expect(flags).toContain("--no-first-run");
+    expect(flags).toContain("--no-default-browser-check");
+    expect(flags).not.toContain("--enable-automation");
+    expect(flags).not.toContain("--test-type");
+    expect(flags).not.toContain("--disable-extensions");
+    expect(flags).not.toContain("--disable-sync");
+    expect(flags).not.toContain("--mute-audio");
+    expect(flags).not.toContain("--password-store=basic");
+    expect(flags).not.toContain("--use-mock-keychain");
     expect(flags).not.toContain("--disable-backgrounding-occluded-windows");
     expect(flags).not.toContain("--disable-renderer-backgrounding");
     expect(flags).not.toContain("--disable-background-timer-throttling");
     expect(flags).not.toContain("--disable-ipc-flooding-protection");
+  });
+
+  test("keeps automation-oriented launch optimizations for headless Chrome", () => {
+    const flags = buildChromeLaunchFlags(buildChromeFlags(true, undefined, "en-US,en"), {
+      headless: true,
+    });
+
+    expect(flags).toContain("--headless=new");
+    expect(flags).toContain("--disable-extensions");
+    expect(flags).toContain("--disable-sync");
+    expect(flags).toContain("--mute-audio");
+    expect(flags).not.toContain("--enable-automation");
+  });
+
+  test("removes automation markers even if a launcher dependency adds them", () => {
+    const flags = buildChromeLaunchFlags(["--enable-automation", "--test-type", "--lang=en-US"]);
+
+    expect(flags).toEqual(["--lang=en-US"]);
   });
 
   test("adds start-minimized for headed Windows managed launches", () => {

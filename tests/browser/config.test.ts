@@ -146,12 +146,17 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.desiredModel).toBe("GPT-5.2 Pro");
   });
 
-  test("does not pass automation-controlled Chrome feature flags", () => {
+  test("uses a minimal interactive flag set for headed Chrome", () => {
     const flags = buildChromeFlags(false, null, "en-US,en");
 
-    expect(flags).toContain("--disable-features=TranslateUI");
+    expect(flags).toContain("--no-first-run");
+    expect(flags).toContain("--no-default-browser-check");
     expect(flags).toContain("--lang=en-US");
     expect(flags).toContain("--accept-lang=en-US,en");
+    expect(flags).not.toContain("--disable-features=TranslateUI");
+    expect(flags).not.toContain("--disable-sync");
+    expect(flags).not.toContain("--disable-extensions");
+    expect(flags).not.toContain("--mute-audio");
     expect(flags.join(" ")).not.toContain("AutomationControlled");
     expect(flags.join(" ")).not.toContain("disable-blink-features");
   });

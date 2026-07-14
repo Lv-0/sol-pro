@@ -26,10 +26,12 @@ export async function launchChrome(
   const connectHost = resolveRemoteDebugHost();
   const debugBindAddress = connectHost && connectHost !== "127.0.0.1" ? "0.0.0.0" : connectHost;
   const debugPort = config.debugPort ?? parseDebugPortEnv();
+  const headless = config.headless ?? false;
   const chromeFlags = buildChromeLaunchFlags(
-    buildChromeFlags(config.headless ?? false, debugBindAddress, config.acceptLanguage, {
+    buildChromeFlags(headless, debugBindAddress, config.acceptLanguage, {
       startMinimized: shouldLaunchChromeMinimized(config),
     }),
+    { headless },
   );
   const usePatchedLauncher = Boolean(connectHost && connectHost !== "127.0.0.1");
   const launcher = usePatchedLauncher
@@ -665,27 +667,27 @@ export function buildChromeFlags(
   options: { startMinimized?: boolean } = {},
 ): string[] {
   const primaryLanguage = acceptLanguage.split(",", 1)[0]?.trim() || "en-US";
-  const flags = [
-    "--disable-background-networking",
-    "--disable-breakpad",
-    "--disable-client-side-phishing-detection",
-    "--disable-default-apps",
-    "--disable-hang-monitor",
-    "--disable-popup-blocking",
-    "--disable-prompt-on-repost",
-    "--disable-sync",
-    "--disable-translate",
-    "--metrics-recording-only",
-    "--no-first-run",
-    "--safebrowsing-disable-auto-update",
-    "--disable-features=TranslateUI",
-    "--mute-audio",
-    "--window-size=1280,720",
-    `--lang=${primaryLanguage}`,
-    `--accept-lang=${acceptLanguage}`,
-  ];
+  const flags = headless
+    ? [
+        "--disable-background-networking",
+        "--disable-breakpad",
+        "--disable-client-side-phishing-detection",
+        "--disable-default-apps",
+        "--disable-hang-monitor",
+        "--disable-popup-blocking",
+        "--disable-prompt-on-repost",
+        "--disable-sync",
+        "--disable-translate",
+        "--metrics-recording-only",
+        "--safebrowsing-disable-auto-update",
+        "--disable-features=TranslateUI",
+        "--mute-audio",
+        "--window-size=1280,720",
+      ]
+    : ["--no-default-browser-check"];
+  flags.push("--no-first-run", `--lang=${primaryLanguage}`, `--accept-lang=${acceptLanguage}`);
 
-  if (process.platform !== "win32" && !isWsl()) {
+  if (headless && process.platform !== "win32" && !isWsl()) {
     flags.push("--password-store=basic", "--use-mock-keychain");
   }
 
@@ -702,11 +704,17 @@ export function buildChromeFlags(
   return flags;
 }
 
-export function buildChromeLaunchFlags(askProFlags: string[]): string[] {
-  return [
-    ...Launcher.defaultFlags().filter((flag) => !CPU_THROTTLING_OVERRIDE_FLAGS.has(flag)),
-    ...askProFlags.filter((flag) => !CPU_THROTTLING_OVERRIDE_FLAGS.has(flag)),
-  ];
+export function buildChromeLaunchFlags(
+  askProFlags: string[],
+  options: { headless?: boolean } = {},
+): string[] {
+  const launcherFlags = options.headless ? Launcher.defaultFlags() : [];
+  return [...launcherFlags, ...askProFlags].filter(
+    (flag) =>
+      !CPU_THROTTLING_OVERRIDE_FLAGS.has(flag) &&
+      flag !== "--enable-automation" &&
+      flag !== "--test-type",
+  );
 }
 
 export function shouldLaunchChromeMinimized(

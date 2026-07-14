@@ -71,6 +71,11 @@ If ChatGPT asks for login, MFA, or a challenge:
    pnpm start -- --resume <session-id>
    ```
 
+For a headed launch, `chrome://version` should show the ask-pro user data
+directory and remote-debugging port, but should not include
+`--enable-automation`, `--test-type`, `--disable-extensions`, `--disable-sync`,
+`--mute-audio`, `--password-store=basic`, or `--use-mock-keychain`.
+
 Expected:
 
 - The tool does not ask for credentials.

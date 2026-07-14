@@ -112,6 +112,9 @@
 
 ### Fixed
 
+- Browser: launch headed managed Chrome with a minimal interactive flag set
+  instead of chrome-launcher's automation-oriented defaults, while preserving
+  the custom profile and remote debugging required for safe browser control.
 - Browser: treat a visible ChatGPT composer as stronger evidence than a stale
   Cloudflare bootstrap script, avoiding false `challenge_detected` auth gates.
 - Browser: keep the original manual-login command waiting for both sign-in and
