@@ -112,6 +112,18 @@
 
 ### Fixed
 
+- Browser: treat a visible ChatGPT composer as stronger evidence than a stale
+  Cloudflare bootstrap script, avoiding false `challenge_detected` auth gates.
+- Browser: keep the original manual-login command waiting for both sign-in and
+  Cloudflare completion, then restart submission automatically.
+- Browser: resume auth-gated pre-submit sessions by reopening submission instead
+  of searching the sidebar for a conversation that does not exist yet.
+- Browser: persist an explicit pre-submit/submitted state so auth recovery does
+  not infer prompt delivery from conversation URLs or duplicate Temporary Chat
+  requests.
+- Browser: persist submitted state immediately after ChatGPT accepts the turn,
+  serialize runtime/state metadata updates, fail closed when submitted runtime
+  metadata is missing, and bound automatic login/challenge recovery retries.
 - CLI: reject `--files` glob roots that resolve outside the project cwd before
   matching files, including parent-relative Windows backslash variants and
   post-wildcard parent traversal.

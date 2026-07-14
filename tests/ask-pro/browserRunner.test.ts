@@ -16,11 +16,16 @@ const resumeBrowserSessionMock = vi.fn(async () => ({
   answerMarkdown: "# Reattached\n",
   chromeMode: "reused_devtools",
 }));
-const runBrowserModeMock = vi.fn(async () => ({
-  answerText: "agent answer",
-  answerMarkdown: "# Agent\n",
-  browserTransport: "launched",
-}));
+const runBrowserModeMock = vi.fn(
+  async (options?: { submissionCb?: () => void | Promise<void> }) => {
+    await options?.submissionCb?.();
+    return {
+      answerText: "agent answer",
+      answerMarkdown: "# Agent\n",
+      browserTransport: "launched",
+    };
+  },
+);
 const closeTabMock = vi.fn(async () => undefined);
 const harvestLatestAssistantZipMock = vi.fn(async () => ({
   schemaVersion: 1 as const,
@@ -1542,6 +1547,180 @@ describe("ask-pro browser runner", () => {
     });
   });
 
+  test("auth resume with a pre-submit home-page runtime reopens submission", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-auth-pre-submit-runtime-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Resume after completing browser auth before prompt submission.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "needs_user_auth",
+        profileDir: testSharedProfileDir(),
+        url: "https://chatgpt.com/",
+        runtime: {
+          chromePort: 9233,
+          chromeHost: "127.0.0.1",
+          chromeTargetId: "auth-tab",
+          tabUrl: "https://chatgpt.com/",
+        },
+        submissionState: "pre_submit",
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "NEEDS_USER_AUTH" });
+
+    await resumeAskProBrowserSession({ cwd, sessionId: session.id });
+
+    expect(resumeBrowserSessionMock).not.toHaveBeenCalled();
+    expect(runBrowserModeMock).toHaveBeenCalledTimes(1);
+    const firstCall = runBrowserModeMock.mock.calls[0] as unknown[] | undefined;
+    expect(firstCall?.[0]).toMatchObject({
+      config: {
+        manualLoginProfileDir: testSharedProfileDir(),
+        startMinimized: false,
+        url: "https://chatgpt.com/",
+      },
+    });
+  });
+
+  test("auth resume does not resubmit a submitted temporary root-url session", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-auth-submitted-root-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Do not submit this prompt twice.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "needs_user_auth",
+        profileDir: testSharedProfileDir(),
+        temporary: true,
+        url: "https://chatgpt.com/?temporary-chat=true",
+        submissionState: "submitted",
+        runtime: {
+          chromePort: 9233,
+          chromeHost: "127.0.0.1",
+          chromeTargetId: "temporary-chat-tab",
+          tabUrl: "https://chatgpt.com/",
+        },
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "NEEDS_USER_AUTH" });
+
+    await resumeAskProBrowserSession({ cwd, sessionId: session.id });
+
+    expect(runBrowserModeMock).not.toHaveBeenCalled();
+    expect(resumeBrowserSessionMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("auth resume fails closed when a submitted session has no runtime metadata", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-auth-submitted-no-runtime-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Never resubmit this prompt without proof that reattach is safe.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "needs_user_auth",
+        profileDir: testSharedProfileDir(),
+        submissionState: "submitted",
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "NEEDS_USER_AUTH" });
+
+    await expect(resumeAskProBrowserSession({ cwd, sessionId: session.id })).rejects.toThrow(
+      /refusing to resubmit/i,
+    );
+    expect(runBrowserModeMock).not.toHaveBeenCalled();
+    expect(resumeBrowserSessionMock).not.toHaveBeenCalled();
+  });
+
+  test("runtime metadata updates cannot downgrade a confirmed submission", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-submission-monotonic-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Persist submission state monotonically.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    runBrowserModeMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[0] as {
+        submissionCb?: () => void | Promise<void>;
+        runtimeHintCb?: (runtime: unknown) => void | Promise<void>;
+      };
+      await options.submissionCb?.();
+      await options.runtimeHintCb?.({
+        chromePort: 9233,
+        chromeHost: "127.0.0.1",
+        chromeTargetId: "post-submit-runtime",
+      });
+      return {
+        answerText: "done",
+        answerMarkdown: "done",
+        browserTransport: "launched",
+      };
+    });
+
+    await runAskProBrowserSession({ cwd, sessionId: session.id });
+
+    const metadata = JSON.parse(
+      await fs.readFile(path.join(session.dir, "browser.json"), "utf8"),
+    ) as { submissionState?: string };
+    expect(metadata.submissionState).toBe("submitted");
+  });
+
+  test("explicit pre-submit state wins over an unrelated conversation URL", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-auth-old-conversation-"));
+    tempDirs.push(cwd);
+    const session = await createAskProSession({
+      cwd,
+      question: "Submit after auth even if the browser opened on an older conversation.",
+      filePatterns: [],
+      dryRun: false,
+    });
+    await writeAskProBrowserMetadata({
+      cwd,
+      sessionId: session.id,
+      metadata: {
+        schemaVersion: 1,
+        status: "needs_user_auth",
+        profileDir: testSharedProfileDir(),
+        submissionState: "pre_submit",
+        runtime: {
+          chromePort: 9233,
+          chromeHost: "127.0.0.1",
+          chromeTargetId: "old-conversation-tab",
+          tabUrl: "https://chatgpt.com/c/old-conversation",
+          conversationId: "old-conversation",
+        },
+      },
+    });
+    await updateAskProStatus({ cwd, sessionId: session.id, status: "NEEDS_USER_AUTH" });
+
+    await resumeAskProBrowserSession({ cwd, sessionId: session.id });
+
+    expect(resumeBrowserSessionMock).not.toHaveBeenCalled();
+    expect(runBrowserModeMock).toHaveBeenCalledTimes(1);
+  });
+
   test("auth relaunch preserves stored non-default ChatGPT URL", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-custom-url-"));
     tempDirs.push(cwd);
@@ -1638,6 +1817,49 @@ describe("ask-pro browser runner", () => {
       },
     });
   });
+
+  test.each([false, true])(
+    "no-temporary resume refuses a submitted temporary session (runtime: %s)",
+    async (withRuntime) => {
+      const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-submitted-temp-no-normal-"));
+      tempDirs.push(cwd);
+      const session = await createAskProSession({
+        cwd,
+        question: "Do not replay this Temporary Chat prompt in normal ChatGPT.",
+        filePatterns: [],
+        dryRun: false,
+      });
+      await writeAskProBrowserMetadata({
+        cwd,
+        sessionId: session.id,
+        metadata: {
+          schemaVersion: 1,
+          status: "needs_user_auth",
+          profileDir: testSharedProfileDir(),
+          temporary: true,
+          url: "https://chatgpt.com/?temporary-chat=true",
+          submissionState: "submitted",
+          ...(withRuntime
+            ? {
+                runtime: {
+                  chromePort: 9233,
+                  chromeHost: "127.0.0.1",
+                  chromeTargetId: "submitted-temporary-tab",
+                  tabUrl: "https://chatgpt.com/",
+                },
+              }
+            : {}),
+        },
+      });
+      await updateAskProStatus({ cwd, sessionId: session.id, status: "NEEDS_USER_AUTH" });
+
+      await expect(
+        resumeAskProBrowserSession({ cwd, sessionId: session.id, temporary: false }),
+      ).rejects.toThrow(/refusing to resubmit in normal ChatGPT/i);
+      expect(runBrowserModeMock).not.toHaveBeenCalled();
+      expect(resumeBrowserSessionMock).not.toHaveBeenCalled();
+    },
+  );
 
   test("reattach without runtime metadata reuses the stored agent profile", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ask-pro-reattach-no-runtime-agent-"));

@@ -64,7 +64,8 @@ If ChatGPT asks for login, MFA, or a challenge:
 
 1. Complete it manually in the opened browser.
 2. Leave the browser open.
-3. Resume the printed session:
+3. Keep the original command running and verify it continues automatically.
+4. If the command already returned `NEEDS_USER_AUTH`, resume the printed session:
 
    ```bash
    pnpm start -- --resume <session-id>

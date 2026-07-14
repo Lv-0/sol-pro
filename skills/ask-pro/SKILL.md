@@ -57,7 +57,10 @@ When invoked:
    `node <cached-runner> -- --cwd <target-repo-root> --no-temporary --prompt-file <path> --files "<repo-relative-glob>"`.
    On Git marketplace installs, the first cached-runner call may bootstrap the
    cache by installing dependencies and building `dist`; wait for that to finish.
-6. If auth is required, stop and ask the human to log in in the opened browser.
+6. If auth is required while the CLI is still running, ask the human to finish
+   login or the browser challenge in the opened browser and let the same command
+   continue automatically. If the CLI has already returned `needs_auth`, ask
+   the human to finish the browser step and run the emitted `resume` command.
 7. Read the CLI's compact `ask_pro` record and run the emitted `resume` or
    `harvest` command when that is the next action.
 8. Treat the answer as advisory; turn it into your own plan before editing code.

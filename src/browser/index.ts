@@ -434,6 +434,10 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   const fallbackSubmission = options.fallbackSubmission;
 
   let config = resolveBrowserConfig(options.config);
+  const authRecoveryAttempt = options.authRecoveryAttempt ?? 0;
+  const authRecoveryDeadlineMs =
+    options.authRecoveryDeadlineMs ??
+    Date.now() + Math.min(config.manualLoginWaitMs ?? config.timeoutMs, config.timeoutMs);
   const logger: BrowserLogger = options.log ?? ((_message: string) => {});
   if (logger.verbose === undefined) {
     logger.verbose = Boolean(config.debug);
@@ -1061,6 +1065,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             state: providerState,
           }),
         );
+        await options.submissionCb?.();
         const providerBaselineTurns = providerState.baselineTurns;
         if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
           baselineTurns = providerBaselineTurns;
@@ -1520,6 +1525,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           ? String(normalizedError.details?.stage ?? "")
           : "";
       const isLoginRequired = stage === "login-required";
+      const isCloudflareChallenge = stage === "cloudflare-challenge";
       const runtime = {
         chromePid: chrome.pid,
         chromePort: chrome.port,
@@ -1537,27 +1543,56 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           : "Cloudflare challenge detected; leaving browser open so you can complete the check.",
       );
       logger(`Reuse this browser profile with: ${reuseProfileHint}`);
-      if (isLoginRequired && manualLogin) {
+      if (
+        canRetryManualAuthRecovery(
+          stage,
+          manualLogin,
+          authRecoveryAttempt,
+          authRecoveryDeadlineMs,
+          Date.now(),
+        )
+      ) {
         const recoveryRuntime = client?.Runtime;
         if (!recoveryRuntime) {
           throw normalizedError;
         }
         logger(
-          "Manual login mode: waiting for sign-in to complete, then restarting the ask-pro submission...",
+          isLoginRequired
+            ? "Manual login mode: waiting for sign-in to complete, then restarting the ask-pro submission..."
+            : "Manual login mode: waiting for the browser challenge to complete, then restarting the ask-pro submission...",
         );
-        await openLoginSurfaceForHumanAction(recoveryRuntime, logger).catch(() => undefined);
-        await revealAuthenticatedWindow("login-required");
+        if (isLoginRequired) {
+          await openLoginSurfaceForHumanAction(recoveryRuntime, logger).catch(() => undefined);
+        }
+        await revealAuthenticatedWindow(
+          isCloudflareChallenge ? "cloudflare-challenge" : "login-required",
+        );
         await waitForManualLoginOnLiveChrome({
           host: chromeHost,
           port: chrome.port,
           logger,
-          timeoutMs: Math.min(config.manualLoginWaitMs ?? config.timeoutMs, config.timeoutMs),
+          timeoutMs: Math.max(
+            1,
+            Math.min(
+              config.manualLoginWaitMs ?? config.timeoutMs,
+              config.timeoutMs,
+              authRecoveryDeadlineMs - Date.now(),
+            ),
+          ),
         });
-        logger("Manual login completed; restarting ask-pro submission.");
+        logger(
+          isCloudflareChallenge
+            ? "Browser challenge completed; restarting ask-pro submission."
+            : "Manual login completed; restarting ask-pro submission.",
+        );
         preserveBrowserOnError = false;
         await client?.close().catch(() => undefined);
         await closeChromeGracefully(chrome, logger).catch(() => undefined);
-        return runBrowserMode(options);
+        return runBrowserMode({
+          ...options,
+          authRecoveryAttempt: authRecoveryAttempt + 1,
+          authRecoveryDeadlineMs,
+        });
       }
       throw new BrowserAutomationError(
         isLoginRequired
@@ -2364,6 +2399,7 @@ async function runRemoteBrowserMode(
           log: logger,
           state: providerState,
         });
+        await options.submissionCb?.();
         const providerBaselineTurns = providerState.baselineTurns;
         if (typeof providerBaselineTurns === "number" && Number.isFinite(providerBaselineTurns)) {
           baselineTurns = providerBaselineTurns;
@@ -2782,6 +2818,8 @@ export const __test__ = {
   detectHumanInterventionReason,
   isLoginRecoveryUrl,
   waitForLogin,
+  shouldWaitForManualAuthRecovery,
+  canRetryManualAuthRecovery,
 };
 export { syncCookies } from "./cookies.js";
 export {
@@ -3047,6 +3085,20 @@ async function readConversationTurnCount(
 
 function isConversationUrl(url: string): boolean {
   return /\/c\/[a-z0-9-]+/i.test(url);
+}
+
+function shouldWaitForManualAuthRecovery(stage: string, manualLogin: boolean): boolean {
+  return manualLogin && (stage === "login-required" || stage === "cloudflare-challenge");
+}
+
+function canRetryManualAuthRecovery(
+  stage: string,
+  manualLogin: boolean,
+  attempt: number,
+  deadlineMs: number,
+  nowMs: number,
+): boolean {
+  return shouldWaitForManualAuthRecovery(stage, manualLogin) && attempt < 2 && nowMs < deadlineMs;
 }
 
 function describeDevtoolsFirewallHint(host: string, port: number): string | null {

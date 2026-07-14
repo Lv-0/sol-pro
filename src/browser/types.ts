@@ -95,6 +95,12 @@ export interface BrowserRunOptions {
   verbose?: boolean;
   /** Optional hook to persist runtime info (port/url/target) as soon as Chrome is ready. */
   runtimeHintCb?: (hint: BrowserRuntimeMetadata) => void | Promise<void>;
+  /** Called immediately after ChatGPT accepts the user prompt submission. */
+  submissionCb?: () => void | Promise<void>;
+  /** @internal Shared retry budget for manual authentication recovery. */
+  authRecoveryAttempt?: number;
+  /** @internal Absolute deadline shared by manual authentication recovery attempts. */
+  authRecoveryDeadlineMs?: number;
   /** Optional hook that can inspect the live page after the final answer is captured. */
   afterAnswerCb?: (context: {
     Runtime: ChromeClient["Runtime"];

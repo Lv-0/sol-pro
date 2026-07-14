@@ -470,21 +470,39 @@ async function waitForPrompt(
 }
 
 async function isCloudflareInterstitial(Runtime: ChromeClient["Runtime"]): Promise<boolean> {
-  const { result: titleResult } = await Runtime.evaluate({
-    expression: "document.title",
+  const { result } = await Runtime.evaluate({
+    expression: `(() => {
+      const selectors = ${JSON.stringify(INPUT_SELECTORS)};
+      const isVisible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        if (node.closest('[hidden],[aria-hidden="true"],[inert]')) return false;
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+          return false;
+        }
+        return node.getClientRects().length > 0;
+      };
+      const hasPrompt = selectors.some((selector) => isVisible(document.querySelector(selector)));
+      return {
+        title: document.title || "",
+        hasPrompt,
+        hasChallengeScript: Boolean(document.querySelector('${CLOUDFLARE_SCRIPT_SELECTOR}')),
+      };
+    })()`,
     returnByValue: true,
   });
-  const title = typeof titleResult.value === "string" ? titleResult.value : "";
+  const value = result.value as
+    | { title?: string; hasPrompt?: boolean; hasChallengeScript?: boolean }
+    | undefined;
+  const title = typeof value?.title === "string" ? value.title : "";
   const challengeTitle = CLOUDFLARE_TITLE.toLowerCase();
-  if (title.toLowerCase().includes(challengeTitle)) {
+  if (title.toLowerCase().includes(challengeTitle) && !value?.hasPrompt) {
     return true;
   }
 
-  const { result } = await Runtime.evaluate({
-    expression: `Boolean(document.querySelector('${CLOUDFLARE_SCRIPT_SELECTOR}'))`,
-    returnByValue: true,
-  });
-  return Boolean(result.value);
+  // ChatGPT can retain the Cloudflare bootstrap script after the challenge has
+  // completed. A visible composer is stronger evidence than that stale script.
+  return Boolean(value?.hasChallengeScript && !value.hasPrompt);
 }
 
 type LoginProbeResult = {

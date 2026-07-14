@@ -40,8 +40,11 @@ ask_pro
   resume: "ask-pro --resume 2026-05-01-billing-webhook"
 ```
 
-The browser window is the credential boundary. The calling agent should ask the
-human to log in there and then run the emitted resume command.
+The browser window is the credential boundary. While the original CLI process
+is still waiting, the calling agent should ask the human to finish login or the
+challenge there; ask-pro detects the composer and continues submission without
+an extra command. Run the emitted resume command only after the CLI has already
+returned `NEEDS_USER_AUTH` or its manual wait expired.
 
 ## Resume behavior
 
@@ -52,6 +55,11 @@ On resume:
 3. Verify correct session prompt/context still exists.
 4. Continue from the last safe state.
 5. Do not resubmit if already submitted; harvest instead.
+
+Sessions created before explicit submission-state metadata was introduced may
+be ambiguous when a Temporary Chat stayed on the root URL. For those legacy
+sessions, avoid repeated resume attempts; inspect or harvest the still-open tab,
+or start a deliberate new session if the old tab is unavailable.
 
 ## Credential safety
 

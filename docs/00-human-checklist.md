@@ -32,6 +32,10 @@ The agent/tool may open a browser and say:
 Please log into ChatGPT in this browser, then resume.
 ```
 
+If the original command is still waiting, completing login or the challenge is
+enough; it continues automatically. Run `--resume` only after the command has
+already returned an auth-gated status or timed out.
+
 You should never paste passwords, MFA codes, or cookies into the agent chat or terminal logs.
 
 ## First live smoke test

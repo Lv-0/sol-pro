@@ -38,6 +38,31 @@ describe("shouldPreserveBrowserOnErrorForTest", () => {
   });
 });
 
+describe("manual auth recovery", () => {
+  test("waits in the same command for login and Cloudflare challenges", () => {
+    expect(__test__.shouldWaitForManualAuthRecovery("login-required", true)).toBe(true);
+    expect(__test__.shouldWaitForManualAuthRecovery("cloudflare-challenge", true)).toBe(true);
+  });
+
+  test("does not wait for unrelated failures or non-manual browser runs", () => {
+    expect(__test__.shouldWaitForManualAuthRecovery("execute-browser", true)).toBe(false);
+    expect(__test__.shouldWaitForManualAuthRecovery("cloudflare-challenge", false)).toBe(false);
+  });
+
+  test("caps automatic auth recovery by attempt count and one shared deadline", () => {
+    expect(__test__.canRetryManualAuthRecovery("login-required", true, 0, 2_000, 1_000)).toBe(true);
+    expect(__test__.canRetryManualAuthRecovery("cloudflare-challenge", true, 1, 2_000, 1_000)).toBe(
+      true,
+    );
+    expect(__test__.canRetryManualAuthRecovery("cloudflare-challenge", true, 2, 2_000, 1_000)).toBe(
+      false,
+    );
+    expect(__test__.canRetryManualAuthRecovery("login-required", true, 1, 2_000, 2_000)).toBe(
+      false,
+    );
+  });
+});
+
 describe("runSubmissionWithRecoveryForTest", () => {
   test("preserves prompt-too-large fallback after a dead-composer retry", async () => {
     const submit = vi

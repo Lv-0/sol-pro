@@ -50,10 +50,10 @@ ask-pro "Return exactly ASK_PRO_BROWSER_OK."
 
 Expected:
 
-- if not logged in, tool returns `NEEDS_USER_AUTH`
-- stdout is an `ask_pro` record with `state: needs_auth`
-- human logs in
-- resume succeeds
+- if not logged in, the headed CLI keeps waiting for human-controlled auth
+- human logs in or completes the browser challenge while the command is running
+- the original command continues and submits without an extra resume
+- if the manual wait expires, stdout reports `state: needs_auth` and resume succeeds
 - final answer is harvested
 
 ## Attachment smoke

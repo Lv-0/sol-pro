@@ -1000,10 +1000,10 @@ describe("ask-pro cli", () => {
     );
     expect(JSON.parse(statusRaw)).toMatchObject({
       resumeCommand: expect.stringMatching(
-        /^npm exec --yes pnpm@10\.33\.2 -- --dir "C:\/Code\/ask-pro" start -- --cwd ".+" --resume /,
+        /^npm exec --yes pnpm@10\.33\.2 -- --dir "C:\/Code\/ask-pro" start -- --cwd ["'].+["'] --resume /,
       ),
       harvestCommand: expect.stringMatching(
-        /^npm exec --yes pnpm@10\.33\.2 -- --dir "C:\/Code\/ask-pro" start -- --cwd ".+" --harvest /,
+        /^npm exec --yes pnpm@10\.33\.2 -- --dir "C:\/Code\/ask-pro" start -- --cwd ["'].+["'] --harvest /,
       ),
     });
   }, 30000);

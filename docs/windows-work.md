@@ -8,7 +8,10 @@ Read this when working on `ask_pro` from Windows and add new findings here.
   Set `ASK_PRO_AGENT_ID` for an isolated agent profile under
   `C:\Users\<you>\.agents\skills\ask-pro\agents\<id>-<hash>\browser-profile`.
 - Browser login is human-controlled. If ChatGPT asks for login, MFA, or a
-  challenge, leave Chrome open and resume with `ask-pro --resume <session-id>`.
+  challenge while the CLI is still running, leave Chrome open and complete the
+  step there; the original command continues automatically. Use
+  `ask-pro --resume <session-id>` only after the CLI has already returned
+  `NEEDS_USER_AUTH` or its manual wait expired.
 - Chrome DevTools state is recorded in each session's `browser.json`; use the
   saved port for DOM inspection when a live browser needs debugging.
 - The GPT-5.6 ChatGPT picker exposes `GPT-5.6 Sol` at the bottom of the model

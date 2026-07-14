@@ -683,7 +683,9 @@ function segmentContainsEmptyCapableExtglob(segment: string): boolean {
 }
 
 function assertNoRootedGlobAlternative(pattern: string, originalPattern: string): void {
-  if (/[,(|](?:\/|[A-Za-z]:\/)/.test(pattern)) {
+  const normalizedOriginal = originalPattern.replace(/\\/g, "/");
+  const expandedToNewRoot = pattern !== normalizedOriginal && /^(?:\/|[A-Za-z]:\/)/.test(pattern);
+  if (expandedToNewRoot || /[,(|](?:\/|[A-Za-z]:\/)/.test(pattern)) {
     throw new Error(`--files path must be inside the project cwd: ${originalPattern}`);
   }
 }

@@ -80,11 +80,29 @@ export async function runAskProBrowserSession({
       url: chatgptUrl,
       acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
       chromeMode: "launching",
+      submissionState: "pre_submit",
     },
   });
   await updateAskProStatus({ cwd, sessionId, status: "BROWSER_STARTING" });
 
   const logger = buildAskProBrowserLogger(cwd, sessionId, verbose);
+  let metadataUpdateQueue: Promise<void> = Promise.resolve();
+  const updateBrowserMetadata = (
+    update: (current: AskProBrowserMetadata) => AskProBrowserMetadata,
+  ): Promise<void> => {
+    const operation = metadataUpdateQueue.then(async () => {
+      const current: AskProBrowserMetadata = await readBrowserMetadata(paths.browser).catch(
+        () => ({}),
+      );
+      const next = update(current);
+      if (current.submissionState === "submitted") {
+        next.submissionState = "submitted";
+      }
+      await writeAskProBrowserMetadata({ cwd, sessionId, metadata: next });
+    });
+    metadataUpdateQueue = operation.catch(() => undefined);
+    return operation;
+  };
   try {
     await updateAskProStatus({ cwd, sessionId, status: "WAITING" });
     const result = await runBrowserMode({
@@ -117,21 +135,32 @@ export async function runAskProBrowserSession({
       heartbeatIntervalMs: 30_000,
       verbose,
       runtimeHintCb: async (runtime) => {
-        await writeAskProBrowserMetadata({
-          cwd,
-          sessionId,
-          metadata: {
-            schemaVersion: 1,
-            status: "running",
-            agentId,
-            profileDir: browserProfile,
-            temporary,
-            url: chatgptUrl,
-            acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
-            chromeMode: "launched",
-            runtime,
-          },
-        });
+        await updateBrowserMetadata((currentMetadata) => ({
+          ...currentMetadata,
+          schemaVersion: 1,
+          status: "running",
+          agentId,
+          profileDir: browserProfile,
+          temporary,
+          url: chatgptUrl,
+          acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+          chromeMode: "launched",
+          submissionState: currentMetadata.submissionState ?? "pre_submit",
+          runtime,
+        }));
+      },
+      submissionCb: async () => {
+        await updateBrowserMetadata((currentMetadata) => ({
+          ...currentMetadata,
+          schemaVersion: 1,
+          status: "running",
+          profileDir: browserProfile,
+          temporary,
+          url: chatgptUrl,
+          acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+          submissionState: "submitted",
+        }));
+        await appendAskProLog(cwd, sessionId, "Prompt submission confirmed by browser runner.");
       },
       afterAnswerCb: async ({ Runtime, Page, Input, answer }) => {
         await writePostAnswerResponseZipManifest({
@@ -155,21 +184,19 @@ export async function runAskProBrowserSession({
     await writeAskProAnswer({ cwd, sessionId, answer });
     await ensureResponseZipManifest(paths.dir, artifactsRequested);
     const finalStatus = await classifyFinalAnswer(paths.dir, answer);
-    await writeAskProBrowserMetadata({
-      cwd,
-      sessionId,
-      metadata: {
-        schemaVersion: 1,
-        status: finalStatus.browserStatus,
-        agentId,
-        profileDir: browserProfile,
-        temporary,
-        url: chatgptUrl,
-        acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
-        chromeMode: "launched",
-        runtime: browserResultToRuntime(result),
-      },
-    });
+    await updateBrowserMetadata((currentMetadata) => ({
+      ...currentMetadata,
+      schemaVersion: 1,
+      status: finalStatus.browserStatus,
+      agentId,
+      profileDir: browserProfile,
+      temporary,
+      url: chatgptUrl,
+      acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+      chromeMode: "launched",
+      runtime: browserResultToRuntime(result),
+      submissionState: "submitted",
+    }));
     await updateAskProStatus({
       cwd,
       sessionId,
@@ -208,14 +235,9 @@ export async function runAskProBrowserSession({
         harvestCommand: sessionStatus.harvestCommand,
         temporary: false,
       });
-      const currentMetadata: AskProBrowserMetadata = await readBrowserMetadata(paths.browser).catch(
-        () => ({}),
-      );
-      const { runtime: _closedTemporaryRuntime, ...metadataWithoutRuntime } = currentMetadata;
-      await writeAskProBrowserMetadata({
-        cwd,
-        sessionId,
-        metadata: {
+      await updateBrowserMetadata((currentMetadata) => {
+        const { runtime: _closedTemporaryRuntime, ...metadataWithoutRuntime } = currentMetadata;
+        return {
           ...metadataWithoutRuntime,
           schemaVersion: 1,
           status: "running",
@@ -225,7 +247,7 @@ export async function runAskProBrowserSession({
           url: ASK_PRO_CHATGPT_URL,
           acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
           chromeMode: "launched",
-        },
+        };
       });
       return runAskProBrowserSession({
         cwd,
@@ -239,23 +261,18 @@ export async function runAskProBrowserSession({
     }
 
     if (isAuthGateError(error)) {
-      const currentMetadata = await readBrowserMetadata(paths.browser).catch(() => ({}));
-      await writeAskProBrowserMetadata({
-        cwd,
-        sessionId,
-        metadata: {
-          ...currentMetadata,
-          schemaVersion: 1,
-          status: "needs_user_auth",
-          agentId,
-          profileDir: browserProfile,
-          temporary,
-          url: chatgptUrl,
-          acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
-          chromeMode: "launched",
-          reason: classifyBrowserError(error),
-        },
-      });
+      await updateBrowserMetadata((currentMetadata) => ({
+        ...currentMetadata,
+        schemaVersion: 1,
+        status: "needs_user_auth",
+        agentId,
+        profileDir: browserProfile,
+        temporary,
+        url: chatgptUrl,
+        acceptLanguage: ASK_PRO_ACCEPT_LANGUAGE,
+        chromeMode: "launched",
+        reason: classifyBrowserError(error),
+      }));
       await updateAskProStatus({
         cwd,
         sessionId,
@@ -266,6 +283,7 @@ export async function runAskProBrowserSession({
     }
 
     if (isAssistantTimeoutError(error)) {
+      await metadataUpdateQueue;
       await writeTerminalBrowserMetadata(cwd, sessionId, "wait_timed_out", "assistant_timeout");
       await updateAskProStatus({
         cwd,
@@ -275,6 +293,7 @@ export async function runAskProBrowserSession({
       });
     } else {
       const reason = error instanceof Error ? error.message : String(error);
+      await metadataUpdateQueue;
       await writeTerminalBrowserMetadata(cwd, sessionId, "failed", reason);
       await updateAskProStatus({
         cwd,
@@ -308,6 +327,15 @@ export async function resumeAskProBrowserSession({
         : (metadata.url ?? ASK_PRO_TEMPORARY_CHATGPT_URL);
   const fallbackProfile = resolveResumeBrowserProfile(metadata);
   const attachRunning = !metadata.agentId;
+  if (
+    effectiveTemporary === false &&
+    isTemporaryAskProUrl(metadata.url ?? "") &&
+    metadata.submissionState === "submitted"
+  ) {
+    throw new Error(
+      `session ${sessionId} already submitted in Temporary Chat; refusing to resubmit in normal ChatGPT`,
+    );
+  }
   if (effectiveTemporary === false && isTemporaryAskProUrl(metadata.url ?? "")) {
     await appendAskProLog(
       cwd,
@@ -326,14 +354,26 @@ export async function resumeAskProBrowserSession({
     });
     return;
   }
-  if (!metadata.runtime) {
-    if (metadata.status !== "needs_user_auth") {
+  const authPendingBeforeSubmission =
+    metadata.status === "needs_user_auth" &&
+    (metadata.submissionState === "pre_submit" ||
+      (metadata.submissionState === undefined &&
+        !hasLegacySubmittedConversation(metadata.runtime)));
+  if (!metadata.runtime && metadata.submissionState === "submitted") {
+    throw new Error(
+      `session ${sessionId} records a submitted prompt but has no saved browser runtime metadata; refusing to resubmit`,
+    );
+  }
+  if (!metadata.runtime || authPendingBeforeSubmission) {
+    if (!authPendingBeforeSubmission && metadata.status !== "needs_user_auth") {
       throw new Error(`session ${sessionId} has no saved browser runtime metadata`);
     }
     await appendAskProLog(
       cwd,
       sessionId,
-      "No saved browser runtime metadata; reopening managed browser submission.",
+      authPendingBeforeSubmission
+        ? "Auth completed before prompt submission; reopening managed browser submission instead of searching for a nonexistent conversation."
+        : "No saved browser runtime metadata; reopening managed browser submission.",
     );
     const storedUrlIsDefaultTemporary = chatgptUrl === ASK_PRO_TEMPORARY_CHATGPT_URL;
     const shouldPreserveUrl =
@@ -884,6 +924,7 @@ interface AskProBrowserMetadata {
   url?: string;
   acceptLanguage?: string;
   chromeMode?: "launching" | "launched" | "reattaching" | "reused_devtools" | "relaunched";
+  submissionState?: "pre_submit" | "submitted";
   runtime?: {
     chromePid?: number;
     chromePort?: number;
@@ -896,6 +937,12 @@ interface AskProBrowserMetadata {
     conversationId?: string;
     controllerPid?: number;
   };
+}
+
+function hasLegacySubmittedConversation(runtime: AskProBrowserMetadata["runtime"]): boolean {
+  if (!runtime) return false;
+  if (runtime.conversationId) return true;
+  return /\/c\/[a-zA-Z0-9-]+/.test(runtime.tabUrl ?? "");
 }
 
 async function readBrowserMetadata(filePath: string): Promise<AskProBrowserMetadata> {

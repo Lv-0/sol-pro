@@ -65,6 +65,10 @@ The default persistent browser profile is:
 Each new profile may need a human login once. On Windows, fresh runs for an
 auth-ready managed profile start minimized; login, resume/recovery, stale-auth,
 and debug paths stay visible or are restored for human action.
+Headed first-login and browser-challenge runs keep the original command waiting
+for up to the configured manual-login window and continue submission
+automatically when the ChatGPT composer becomes available. Use `--resume` only
+when the CLI has already returned a `needs_auth` action or the wait expired.
 
 ## Quick Use
 
