@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const args = parseArgs(process.argv.slice(2));
-const pluginName = args.pluginName ?? "ask-pro";
+const pluginName = args.pluginName ?? "sol-pro";
 const codexHome = args.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
 const marketplacePath = args.marketplacePath ?? (await findCodexMarketplace(codexHome, pluginName));
 
@@ -60,7 +60,7 @@ assertInside(
   "Resolved plugin cache path is outside Codex plugin cache",
 );
 
-const requiredDistEntry = path.join(repoRoot, "dist", "bin", "ask-pro-cli.js");
+const requiredDistEntry = path.join(repoRoot, "dist", "bin", "sol-pro-cli.js");
 if (!(await exists(requiredDistEntry))) {
   throw new Error("dist is missing. Run `pnpm run build` before refreshing the plugin cache.");
 }
@@ -163,7 +163,9 @@ async function findCodexMarketplace(codexHome, pluginName) {
 }
 
 function resolveConfiguredSourceRoot(sourcePath, marketplaceFile) {
+  const marketplaceRoot = path.resolve(path.dirname(marketplaceFile), "../..");
   const candidates = [
+    path.resolve(marketplaceRoot, sourcePath),
     path.resolve(path.dirname(marketplaceFile), sourcePath),
     path.resolve(os.homedir(), sourcePath),
   ];

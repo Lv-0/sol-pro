@@ -8,14 +8,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       all: true,
-      include: ["src/ask-pro/**/*.ts", "src/browser/**/*.ts", "bin/ask-pro-cli.ts"],
-      exclude: [
-        "src/browser/actions/**",
-        "src/browser/index.ts",
-        "src/browser/pageActions.ts",
-        "src/browser/chromeLifecycle.ts",
-        "src/browserMode.ts",
-      ],
+      include: ["src/sol-pro/**/*.ts", "bin/sol-pro-cli.ts"],
     },
   },
   resolve: {

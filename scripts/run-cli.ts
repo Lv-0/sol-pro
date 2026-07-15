@@ -11,12 +11,12 @@ const repoRoot =
   path.basename(path.dirname(here)) === "dist"
     ? path.resolve(here, "../..")
     : path.resolve(here, "..");
-const cliEntry = path.join(here, "../bin/ask-pro-cli.js");
+const cliEntry = path.join(here, "../bin/sol-pro-cli.js");
 
 const child = spawn(process.execPath, ["--", cliEntry, ...args], {
   env: {
     ...process.env,
-    ASK_PRO_SOURCE_CHECKOUT_LAUNCHER: `npm exec --yes pnpm@10.33.2 -- --dir ${quoteCommandArg(repoRoot)} start --`,
+    SOL_PRO_SOURCE_CHECKOUT_LAUNCHER: `npm exec --yes pnpm@10.33.2 -- --dir ${quoteCommandArg(repoRoot)} start --`,
   },
   stdio: "inherit",
 });

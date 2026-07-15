@@ -1,14 +1,14 @@
 {
-  "name": "ask-pro",
+  "name": "sol-pro",
   "interface": {
-    "displayName": "ask-pro"
+    "displayName": "sol-pro"
   },
   "plugins": [
     {
-      "name": "ask-pro",
+      "name": "sol-pro",
       "source": {
         "source": "url",
-        "url": "https://github.com/Pimpmuckl/ask-pro.git",
+        "url": "https://github.com/Lv-0/sol-pro.git",
         "ref": "main"
       },
       "policy": {

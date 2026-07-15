@@ -1,7 +1,7 @@
 param(
   [string]$MarketplacePath = "",
   [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { "$HOME/.codex" }),
-  [string]$PluginName = "ask-pro"
+  [string]$PluginName = "sol-pro"
 )
 
 $ErrorActionPreference = "Stop"

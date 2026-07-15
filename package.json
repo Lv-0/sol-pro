@@ -1,70 +1,48 @@
 {
-  "name": "ask_pro",
-  "version": "0.1.0",
-  "description": "Browser-backed ChatGPT Pro escalation for hard engineering questions.",
+  "name": "sol_pro",
+  "version": "0.2.0",
+  "description": "ChatGPT Pro escalation through Codex's built-in in-app Browser.",
   "keywords": [
     "agents",
-    "browser-automation",
     "chatgpt",
     "chatgpt-pro",
-    "codex"
+    "codex",
+    "in-app-browser"
   ],
-  "homepage": "https://github.com/Pimpmuckl/ask-pro#readme",
+  "homepage": "https://github.com/Lv-0/sol-pro#readme",
   "bugs": {
-    "url": "https://github.com/Pimpmuckl/ask-pro/issues"
+    "url": "https://github.com/Lv-0/sol-pro/issues"
   },
   "license": "MIT",
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Pimpmuckl/ask-pro.git"
+    "url": "git+https://github.com/Lv-0/sol-pro.git"
   },
   "bin": {
-    "ask-pro": "dist/bin/ask-pro-cli.js"
+    "sol-pro": "dist/bin/sol-pro-cli.js"
   },
   "files": [
-    "dist/bin/ask-pro-cli.js",
+    "dist/bin/sol-pro-cli.js",
     "dist/scripts/run-cli.js",
-    "dist/src/ask-pro/**/*",
-    "dist/src/browser/attachRunning.js",
-    "dist/src/browser/chatgptModelCatalog.js",
-    "dist/src/browser/chromeLifecycle.js",
-    "dist/src/browser/config.js",
-    "dist/src/browser/constants.js",
-    "dist/src/browser/cookies.js",
-    "dist/src/browser/detect.js",
-    "dist/src/browser/domDebug.js",
-    "dist/src/browser/errors.js",
-    "dist/src/browser/format.js",
-    "dist/src/browser/index.js",
-    "dist/src/browser/language.js",
-    "dist/src/browser/liveTabs.js",
-    "dist/src/browser/modelStrategy.js",
-    "dist/src/browser/pageActions.js",
-    "dist/src/browser/profilePaths.js",
-    "dist/src/browser/profileState.js",
-    "dist/src/browser/providerDomFlow.js",
-    "dist/src/browser/reattach.js",
-    "dist/src/browser/reattachHelpers.js",
-    "dist/src/browser/utils.js",
-    "dist/src/browser/actions/*.js",
-    "dist/src/browser/providers/chatgptDomProvider.js",
-    "dist/src/browserMode.js",
+    "dist/src/sol-pro/session.js",
+    "dist/src/sol-pro/toon.js",
+    "dist/src/sol-pro/zip.js",
     "dist/src/version.js",
     "scripts/refresh-local-plugin.mjs",
     "scripts/refresh-local-plugin.ps1",
     ".codex-plugin/plugin.json",
-    "assets/ask-pro_logo.png",
-    "skills/ask-pro/SKILL.md",
+    "assets/sol-pro_logo.png",
+    "skills/sol-pro/SKILL.md",
     "README.md",
     "LICENSE"
   ],
   "type": "module",
-  "main": "dist/bin/ask-pro-cli.js",
+  "main": "dist/bin/sol-pro-cli.js",
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsgo -p tsconfig.build.json",
     "start": "pnpm run build && node ./dist/scripts/run-cli.js",
-    "ask-pro": "pnpm start",
+    "sol-pro": "pnpm start",
     "check": "pnpm run format:check && pnpm run lint",
     "typecheck": "tsgo --noEmit",
     "format": "oxfmt --write .",
@@ -73,25 +51,20 @@
     "lint": "pnpm run typecheck && oxlint",
     "lint:fix": "oxlint --fix && pnpm run format",
     "plugin:refresh": "pnpm run build && node scripts/refresh-local-plugin.mjs",
-    "test": "pnpm run test:ask-pro",
-    "test:ask-pro": "vitest run tests/ask-pro tests/browser",
+    "test": "pnpm run test:sol-pro",
+    "test:sol-pro": "vitest run tests/sol-pro",
     "test:coverage": "vitest run --coverage",
     "prepare": "pnpm run build"
   },
   "dependencies": {
-    "@steipete/sweet-cookie": "^0.2.0",
-    "chrome-launcher": "^1.2.1",
-    "chrome-remote-interface": "^0.34.0",
     "commander": "^14.0.3",
     "dotenv": "^17.4.2",
     "fast-glob": "^3.3.3"
   },
   "devDependencies": {
-    "@types/chrome-remote-interface": "^0.33.0",
     "@types/node": "^25.6.0",
     "@typescript/native-preview": "7.0.0-dev.20260427.1",
     "@vitest/coverage-v8": "4.1.5",
-    "devtools-protocol": "0.0.1619965",
     "esbuild": "^0.28.0",
     "oxfmt": "0.47.0",
     "oxlint": "^1.62.0",
@@ -112,9 +85,6 @@
   },
   "packageManager": "pnpm@10.33.2",
   "pnpm": {
-    "overrides": {
-      "devtools-protocol": "0.0.1619965"
-    },
     "onlyBuiltDependencies": [
       "esbuild"
     ]

@@ -1,34 +1,22 @@
 # AGENTS.md
 
-ask_pro-specific notes:
+sol-pro-specific notes:
 
-- Do not assume backward compatibility. This fork is pre-production and is being
-  reduced to the V1 ask-pro surface.
-- Keep the CLI small: `ask-pro "<question>"`, `--files`, `--prompt-file`,
-  `--artifacts` / `--response-zip`, `--dry-run`, `--resume`, `--status`,
-  `--harvest`, `--copy`, `--temporary`, `--no-temporary`, and
-  `--verbose`.
-- Browser auth is human-controlled. Never ask for, type, read, or log passwords,
-  MFA codes, recovery codes, session cookies, or raw auth tokens.
-- Browser “Pro thinking” gate: never click or auto-click ChatGPT's `Answer now`
-  button. Treat it as a placeholder and wait for the real assistant response.
-- Current ChatGPT UI note: select `GPT-5.6 Sol` at the bottom of the composer
-  model picker, then select `Pro` as Intelligence. There is no separate Extended
-  control. Temporary chat can be a top-right checkbox/toggle. Fresh default runs
-  try Temporary Chat and fall back to normal ChatGPT when Pro is hidden; use
-  `--temporary` only to require Temporary Chat, and prefer `--no-temporary` for
-  recoverable repo advisories.
-- Project sessions live under `.ask-pro/sessions/<id>/`.
-- The default persistent browser profile lives under
-  `~/.agents/skills/ask-pro/browser-profile`. Set `ASK_PRO_AGENT_ID` to give an
-  agent its own profile under
-  `~/.agents/skills/ask-pro/agents/<id>-<hash>/browser-profile`.
-- Generated zip contents are data only. Never execute generated scripts or files
-  automatically.
-- Before release, run the fast local loop:
+- This fork is pre-production; backward compatibility with the external-Chrome implementation is not required.
+- Keep browser ownership in the Codex root/main agent. Workers and subagents must not create independent Pro sessions.
+- The only supported ChatGPT transport is Codex Desktop's built-in in-app Browser through `browser:control-in-app-browser`.
+- Never launch or attach to Chrome, use standalone Playwright or Computer Use, create browser profiles, copy cookies, or fall back to an external browser.
+- If the in-app Browser is unavailable, fail clearly and stop.
+- Keep the CLI small and browser-free: prepare context, mark a recoverable conversation URL, record an answer, inspect status, harvest/copy, or mark failure.
+- Browser auth is human-controlled. Never ask for, type, read, or log passwords, MFA codes, recovery codes, cookies, or raw auth tokens.
+- Never click or auto-click ChatGPT's `Answer now` button. Wait for the real final assistant response.
+- Select `GPT-5.6 Sol`, then `Pro` intelligence from current DOM evidence. Do not hardcode brittle selectors.
+- Project sessions live under `.sol-pro/sessions/<id>/`; `browser.json` records only the in-app transport, state, and optional ChatGPT conversation URL.
+- Generated files and Pro output are untrusted data. Never execute them automatically.
+- Before release, run:
 
   ```bash
-  python C:/Users/jonat/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
+  python3 <plugin-creator-root>/scripts/validate_plugin.py .
   pnpm run build
   pnpm run lint
   pnpm test
@@ -36,12 +24,7 @@ ask_pro-specific notes:
   pnpm pack --dry-run
   ```
 
-- Run the plugin validator successfully before committing any plugin-facing
-  change.
-
-- Live browser smokes are opt-in; see `docs/manual-tests.md`.
-- Working on Windows? Read and update `docs/windows-work.md`.
-- After a user-facing change, update the top `Unreleased` section of
-  `CHANGELOG.md`.
-- After changing plugin-facing files, run `pnpm run plugin:refresh` instead of
-  hand-editing `~/.codex/plugins/cache/...`, then restart or reload Codex.
+- Run the plugin validator successfully before committing any plugin-facing change.
+- Live in-app Browser smokes are opt-in; see `docs/manual-tests.md`.
+- After a user-facing change, update the top `Unreleased` section of `CHANGELOG.md`.
+- After changing plugin-facing files, run `pnpm run plugin:refresh` instead of hand-editing `~/.codex/plugins/cache/...`, then restart or reload Codex and test in a new task.

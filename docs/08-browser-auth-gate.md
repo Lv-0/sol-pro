@@ -1,94 +1,11 @@
-# Browser auth gate
+# In-app Browser auth gate
 
-`ask-pro` must handle auth as a state machine.
+Authentication belongs to the user and the Codex in-app Browser.
 
-## States
+- Never inspect browser storage, profiles, cookies, passwords, MFA codes, recovery codes, or raw tokens.
+- If ChatGPT is signed out, keep the task tab as a handoff and ask the user to sign in there.
+- Follow the Browser skill's confirmation and CAPTCHA rules.
+- Resume only after the user confirms that the ChatGPT composer is visible.
+- Record only the recoverable `https://chatgpt.com/c/<id>` URL; do not persist session material.
 
-```text
-BROWSER_STARTING
-NEEDS_USER_AUTH
-DRY_RUN_COMPLETE
-READY_TO_SUBMIT
-WAITING
-WAIT_TIMED_OUT
-INCOMPLETE_ANSWER
-HARVESTED
-COMPLETED
-FAILED
-```
-
-## Auth detection
-
-Return `NEEDS_USER_AUTH` when:
-
-- URL contains login/auth/account challenge
-- ChatGPT composer is not visible
-- MFA UI is visible
-- CAPTCHA/challenge UI is visible
-- user account chooser is visible
-- browser asks for permission that requires human action
-
-## Agent-facing result
-
-```toon
-ask_pro
-  session: 2026-05-01-billing-webhook
-  state: needs_auth
-  reason: login_page_detected
-  profile: ~/.agents/skills/ask-pro/browser-profile
-  action: human_login_then_resume
-  resume: "ask-pro --resume 2026-05-01-billing-webhook"
-```
-
-The browser window is the credential boundary. While the original CLI process
-is still waiting, the calling agent should ask the human to finish login or the
-challenge there; ask-pro detects the composer and continues submission without
-an extra command. Run the emitted resume command only after the CLI has already
-returned `NEEDS_USER_AUTH` or its manual wait expired.
-
-## Resume behavior
-
-On resume:
-
-1. Reattach to existing browser/tab if possible.
-2. Verify ChatGPT composer is visible.
-3. Verify correct session prompt/context still exists.
-4. Continue from the last safe state.
-5. Do not resubmit if already submitted; harvest instead.
-
-Sessions created before explicit submission-state metadata was introduced may
-be ambiguous when a Temporary Chat stayed on the root URL. For those legacy
-sessions, avoid repeated resume attempts; inspect or harvest the still-open tab,
-or start a deliberate new session if the old tab is unavailable.
-
-## Credential safety
-
-Never:
-
-- type the user's password
-- ask the user to share MFA codes
-- read cookies from logs
-- print auth cookies
-- store raw cookies in session logs
-
-Debug logs must redact cookies and bearer tokens.
-
-## Browser modes
-
-The `ask-pro` CLI uses deterministic managed profiles. Browser-profile locks are
-a runtime guard around managed Chrome use; they are not a full orchestration
-queue for multiple agents. For true concurrent lanes, prefer stable
-`ASK_PRO_AGENT_ID` values so each lane gets its own profile. Resume may reattach
-to saved browser runtime metadata when a session already has it.
-
-1. persistent automation profile at `~/.agents/skills/ask-pro/browser-profile`
-   for default runs, or
-   `~/.agents/skills/ask-pro/agents/<id>-<hash>/browser-profile` when
-   `ASK_PRO_AGENT_ID` is set
-2. headful manual-login browser
-3. headless only after auth has been verified
-
-Generic browser automation may attach to a user-approved running Chrome, but
-`ask-pro` keeps agent-scoped runs on the managed profile path.
-
-Headless is an optimization, not the auth bootstrap path.
+There is no Chrome or external-browser auth recovery path.

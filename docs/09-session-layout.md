@@ -1,102 +1,28 @@
 # Session layout
 
-Each run creates a durable session.
-
-## Local project sessions
-
 ```text
-.ask-pro/sessions/<session-id>/
+.sol-pro/sessions/<id>/
+  PROMPT.md
+  MANIFEST.md
+  MANIFEST.json
+  CONTEXT.zip
+  ANSWER.md
+  browser.json
+  status.json
+  log.txt
 ```
 
-## Required files
+`PROMPT.md` is the only ChatGPT transport artifact and contains bounded redacted evidence inline. The root agent reads it through the local runtime and pastes its complete text once through the in-app Browser clipboard. A long prompt becomes one ChatGPT `Pasted text` item; a short prompt may remain inline. The page does not receive a local path. `CONTEXT.zip` stays local as an audit copy because the in-app Browser cannot upload local files.
 
-```text
-PROMPT.md                 # final prompt submitted to ChatGPT
-MANIFEST.md               # human-readable context manifest
-MANIFEST.json             # machine-readable context manifest
-CONTEXT.zip               # uploaded repo context bundle
-ANSWER.md                 # harvested markdown answer
-status.json               # current state
-browser.json              # browser/session/tab metadata
-log.txt                   # redacted log
-```
-
-## Optional files
-
-```text
-downloads/ask-pro-response.zip
-pro-output/IMPLEMENTATION_PLAN.md
-pro-output/TASKS.json
-pro-output/TEST_PLAN.md
-pro-output/RISK_REGISTER.md
-pro-output/FILES_TO_EDIT.md
-pro-output/REPO_CONTEXT_USED.md
-PRO_OUTPUT_MANIFEST.json
-CODEX_PLAN.md
-```
-
-## Session ID format
-
-Prefer:
-
-```text
-YYYY-MM-DDTHHMMSS-short-slug-8hex
-```
-
-Example:
-
-```text
-2026-05-01T142000-billing-webhook-1a2b3c4d
-```
-
-Session IDs are plain directory names made from ASCII letters, numbers, and
-hyphens. Session helpers reject path-like IDs before reading or writing files,
-and resolve accepted IDs only below `.ask-pro/sessions/<session-id>/`.
-
-## `MANIFEST.json`
+`browser.json` contains only:
 
 ```json
 {
   "schemaVersion": 1,
-  "sessionId": "2026-05-01T142000-billing-webhook-1a2b3c4d",
-  "question": "Should this billing webhook use a queue or transactional outbox?",
-  "includedFiles": [
-    {
-      "path": "src/api/stripe/webhook.ts",
-      "reason": "Current webhook entry point"
-    }
-  ],
-  "excludedFiles": [
-    {
-      "path": ".env",
-      "reason": "secret file"
-    }
-  ],
-  "redaction": {
-    "mode": "best_effort",
-    "findings": []
-  }
+  "transport": "codex_in_app_browser",
+  "status": "submitted",
+  "conversationUrl": "https://chatgpt.com/c/<id>"
 }
 ```
 
-## `status.json`
-
-```json
-{
-  "schemaVersion": 1,
-  "sessionId": "2026-05-01T142000-billing-webhook-1a2b3c4d",
-  "status": "WAITING",
-  "createdAt": "2026-05-01T14:20:00+02:00",
-  "updatedAt": "2026-05-01T14:35:00+02:00",
-  "resumeCommand": "ask-pro --resume 2026-05-01T142000-billing-webhook-1a2b3c4d",
-  "harvestCommand": "ask-pro --harvest 2026-05-01T142000-billing-webhook-1a2b3c4d"
-}
-```
-
-## Retention
-
-Do not auto-delete sessions by default. Long-running Pro work must be replayable and harvestable.
-
-`browser.json` records the exact browser profile path used for the run. When
-`ASK_PRO_AGENT_ID` is set, that path is agent-specific so reattach uses the same
-isolated profile.
+`status.json` uses `PREPARED`, `SUBMITTED`, `WAITING`, `COMPLETED`, `HARVESTED`, or `FAILED`. Sessions are not auto-deleted.

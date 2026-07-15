@@ -8,7 +8,7 @@ const rawArgs = process.argv.slice(2);
 const args = rawArgs[0] === "--" ? rawArgs.slice(1) : rawArgs;
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const cacheRoot = path.resolve(scriptDir, "..");
-const cliEntry = path.join(cacheRoot, "dist", "bin", "ask-pro-cli.js");
+const cliEntry = path.join(cacheRoot, "dist", "bin", "sol-pro-cli.js");
 const launcher = `${quoteCommandPart(process.execPath)} ${quoteCommandPart(fileURLToPath(import.meta.url))} --`;
 
 await ensureBuiltCli();
@@ -16,7 +16,7 @@ await ensureBuiltCli();
 const child = spawn(process.execPath, [cliEntry, ...args], {
   env: {
     ...process.env,
-    ASK_PRO_SOURCE_CHECKOUT_LAUNCHER: launcher,
+    SOL_PRO_SOURCE_CHECKOUT_LAUNCHER: launcher,
   },
   stdio: "inherit",
 });
@@ -37,17 +37,17 @@ async function ensureBuiltCli() {
 
   const packageJson = path.join(cacheRoot, "package.json");
   if (!fs.existsSync(packageJson)) {
-    throw new Error(`ask-pro plugin cache is missing package.json at ${packageJson}`);
+    throw new Error(`sol-pro plugin cache is missing package.json at ${packageJson}`);
   }
 
-  console.error("[ask-pro] dist is missing; bootstrapping marketplace plugin cache.");
+  console.error("[sol-pro] dist is missing; bootstrapping marketplace plugin cache.");
   await runNpm(["exec", "--yes", "pnpm@10.33.2", "--", "install", "--frozen-lockfile"]);
   if (!fs.existsSync(cliEntry)) {
     await runNpm(["exec", "--yes", "pnpm@10.33.2", "--", "run", "build"]);
   }
 
   if (!fs.existsSync(cliEntry)) {
-    throw new Error(`ask-pro bootstrap completed but CLI entry is still missing: ${cliEntry}`);
+    throw new Error(`sol-pro bootstrap completed but CLI entry is still missing: ${cliEntry}`);
   }
 }
 

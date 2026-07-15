@@ -1,8 +1,8 @@
 type ToonValue = string | number | boolean | null | undefined;
 
-export type AskProToonFields = Record<string, ToonValue>;
+export type SolProToonFields = Record<string, ToonValue>;
 
-export function renderToonRecord(name: string, fields: AskProToonFields): string {
+export function renderToonRecord(name: string, fields: SolProToonFields): string {
   const lines = [name];
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined) continue;

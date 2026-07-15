@@ -10,6 +10,6 @@
     "removeComments": false,
     "allowImportingTsExtensions": false
   },
-  "include": ["bin/ask-pro-cli.ts", "scripts/run-cli.ts"],
+  "include": ["bin/sol-pro-cli.ts", "scripts/run-cli.ts"],
   "exclude": ["tests", "dist", "node_modules", ".bun-check"]
 }
